@@ -1,0 +1,91 @@
+#![deny(warnings)]
+
+// Touch a file (create or update timestamp)
+
+use crate::error::{FileIoError, Result};
+use filetime::{set_file_times, FileTime};
+use std::fs;
+use std::path::Path;
+use std::time::SystemTime;
+
+/// Touch a file (create if it doesn't exist, update timestamp if it does)
+pub fn touch(path: &str) -> Result<()> {
+    let path_obj = Path::new(path);
+
+    if path_obj.exists() {
+        // Update timestamp using filetime crate
+        let now = SystemTime::now();
+        let file_time = FileTime::from_system_time(now);
+        set_file_times(path, file_time, file_time).map_err(|e| {
+            FileIoError::WriteError(format!("Failed to update timestamp for {}: {}", path, e))
+        })?;
+    } else {
+        // Create empty file
+        // Create parent directories if needed
+        if let Some(parent) = path_obj.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                FileIoError::WriteError(format!(
+                    "Failed to create parent directories for {}: {}",
+                    path, e
+                ))
+            })?;
+        }
+        fs::File::create(path).map_err(|e| {
+            FileIoError::WriteError(format!("Failed to create file {}: {}", path, e))
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_touch_create_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("newfile.txt");
+        let path_str = path.to_str().unwrap().to_string();
+
+        touch(&path_str).unwrap();
+        assert!(path.exists());
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn test_touch_update_timestamp() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("existing.txt");
+        let path_str = path.to_str().unwrap().to_string();
+
+        // Create file first
+        fs::write(&path, "content").unwrap();
+        let metadata1 = fs::metadata(&path).unwrap();
+        let modified1 = metadata1.modified().unwrap();
+
+        // Small delay to ensure different timestamp
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Touch the file
+        touch(&path_str).unwrap();
+
+        let metadata2 = fs::metadata(&path).unwrap();
+        let modified2 = metadata2.modified().unwrap();
+
+        // The timestamp should be updated (greater than or equal)
+        assert!(modified2 >= modified1);
+    }
+
+    #[test]
+    fn test_touch_creates_parent_dirs() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("subdir").join("file.txt");
+        let path_str = path.to_str().unwrap().to_string();
+
+        touch(&path_str).unwrap();
+        assert!(path.exists());
+    }
+}
