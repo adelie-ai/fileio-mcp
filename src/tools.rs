@@ -18,7 +18,7 @@ impl ToolRegistry {
     pub fn list_tools(&self) -> Value {
         serde_json::json!([
             {
-                "name": "read_lines",
+                "name": "fileio_read_lines",
                 "description": "Read lines from a file with optional windowing. Supports both start/end line numbers and start/count parameters.",
                 "inputSchema": {
                     "type": "object",
@@ -48,7 +48,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "write_file",
+                "name": "fileio_write_file",
                 "description": "Write content to a file. Creates parent directories if needed. Supports append mode.",
                 "inputSchema": {
                     "type": "object",
@@ -70,7 +70,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "set_file_mode",
+                "name": "fileio_set_file_mode",
                 "description": "Set file permissions (mode). Supports octal format (e.g., 755, 0644).",
                 "inputSchema": {
                     "type": "object",
@@ -88,7 +88,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "mkdir",
+                "name": "fileio_mkdir",
                 "description": "Create a directory. By default creates parent directories recursively (like mkdir -p).",
                 "inputSchema": {
                     "type": "object",
@@ -106,7 +106,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "list_directory",
+                "name": "fileio_list_directory",
                 "description": "List directory contents. Returns file/directory information including name, path, type, size, and modified time.",
                 "inputSchema": {
                     "type": "object",
@@ -128,7 +128,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "file_find",
+                "name": "fileio_file_find",
                 "description": "Find files matching a pattern. Uses glob-like pattern matching.",
                 "inputSchema": {
                     "type": "object",
@@ -155,7 +155,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "find_in_files",
+                "name": "fileio_find_in_files",
                 "description": "Find text or regex patterns in files. Supports case-sensitive/insensitive matching, whole word matching, multiline matching, and various filtering options.",
                 "inputSchema": {
                     "type": "object",
@@ -209,7 +209,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "patch_file",
+                "name": "fileio_patch_file",
                 "description": "Apply patches to files. Supports unified diff format and add/remove lines format.",
                 "inputSchema": {
                     "type": "object",
@@ -245,7 +245,7 @@ impl ToolRegistry {
         })?;
 
         match name {
-            "read_lines" => {
+            "fileio_read_lines" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -273,7 +273,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "write_file" => {
+            "fileio_write_file" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -301,7 +301,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "set_file_mode" => {
+            "fileio_set_file_mode" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -328,7 +328,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "mkdir" => {
+            "fileio_mkdir" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -348,7 +348,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "list_directory" => {
+            "fileio_list_directory" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -373,7 +373,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "file_find" => {
+            "fileio_file_find" => {
                 let pattern = args
                     .get("pattern")
                     .and_then(|v| v.as_str())
@@ -398,7 +398,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "find_in_files" => {
+            "fileio_find_in_files" => {
                 let pattern = args
                     .get("pattern")
                     .and_then(|v| v.as_str())
@@ -451,7 +451,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "patch_file" => {
+            "fileio_patch_file" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
