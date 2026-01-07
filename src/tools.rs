@@ -70,7 +70,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_set_file_mode",
+                "name": "fileio_set_permissions",
                 "description": "Set file or directory permissions (chmod equivalent). Use this to change file permissions on Unix-like systems. Accepts octal format strings like '755' (rwxr-xr-x), '0644' (rw-r--r--), etc. The mode string can include or omit the leading zero. Works on files and directories.",
                 "inputSchema": {
                     "type": "object",
@@ -89,7 +89,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_set_mode",
-                "description": "Set file or directory permissions (chmod equivalent). This is an alias for fileio_set_file_mode with the same functionality. Accepts octal format strings like '755', '0644', etc. Use whichever name is more convenient.",
+                "description": "Set file or directory permissions (chmod equivalent). This is an alias for fileio_set_permissions with the same functionality. Accepts octal format strings like '755', '0644', etc. Use whichever name is more convenient.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -106,7 +106,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_get_mode",
+                "name": "fileio_get_permissions",
                 "description": "Get file or directory permissions (mode) as an octal string. Returns the current permissions in octal format (e.g., '0755', '0644'). Useful for checking current permissions before modifying them or for auditing purposes.",
                 "inputSchema": {
                     "type": "object",
@@ -148,7 +148,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_mkdir",
+                "name": "fileio_make_directory",
                 "description": "Create a directory. By default, creates parent directories recursively (equivalent to 'mkdir -p'). If recursive is false, will fail if parent directories don't exist. If the directory already exists, the operation succeeds (idempotent).",
                 "inputSchema": {
                     "type": "object",
@@ -188,7 +188,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_file_find",
+                "name": "fileio_find_files",
                 "description": "Find files and directories matching a pattern. Uses efficient file system traversal with glob-like pattern matching. Supports wildcards: * (matches any sequence) and ? (matches single character). Can filter by file type and limit search depth. Returns an array of matching file paths. Similar to the 'find' command but with pattern matching.",
                 "inputSchema": {
                     "type": "object",
@@ -292,7 +292,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_cp",
+                "name": "fileio_copy",
                 "description": "Copy files or directories (cp equivalent). Copies the source to the destination. Supports glob patterns in source (e.g., '*.txt', 'file?.log'). When using globs, multiple files can be copied to a destination directory. For files, creates a copy at the destination. For directories, requires recursive=true to copy the entire directory tree. If destination is a directory, the source will be copied into it. If destination is a file path, it will be overwritten (only works with single source). Creates parent directories of destination if needed.",
                 "inputSchema": {
                     "type": "object",
@@ -314,7 +314,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_mv",
+                "name": "fileio_move",
                 "description": "Move or rename files or directories (mv equivalent). Moves the source to the destination location. Supports glob patterns in source (e.g., '*.txt', 'file?.log'). When using globs, multiple files can be moved to a destination directory. Can be used to rename (same directory, different name) or move (different location). Creates parent directories of destination if needed. The source will no longer exist at its original location after a successful move.",
                 "inputSchema": {
                     "type": "object",
@@ -332,7 +332,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_rm",
+                "name": "fileio_remove",
                 "description": "Remove files or directories (rm equivalent). Permanently deletes the specified path. Supports glob patterns (e.g., '*.tmp', 'file?.log', 'dir/*.bak') to remove multiple files matching the pattern. For directories, recursive=true is required to remove non-empty directories. Use force=true to suppress errors if the file doesn't exist (idempotent removal). Warning: This operation cannot be undone.",
                 "inputSchema": {
                     "type": "object",
@@ -354,7 +354,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_rmdir",
+                "name": "fileio_remove_directory",
                 "description": "Remove a directory (rmdir equivalent). Specifically for removing directories. Requires recursive=true for non-empty directories. Will fail if the path is not a directory. Use this when you want to ensure you're only removing directories, not files.",
                 "inputSchema": {
                     "type": "object",
@@ -372,7 +372,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_ln",
+                "name": "fileio_create_hard_link",
                 "description": "Create a hard link (ln equivalent). Creates a hard link from link_path to target. Both paths will refer to the same file data. Hard links only work for files (not directories) and must be on the same filesystem. The target must exist. Deleting either path doesn't delete the file until all links are removed.",
                 "inputSchema": {
                     "type": "object",
@@ -390,7 +390,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_symlink",
+                "name": "fileio_create_symbolic_link",
                 "description": "Create a symbolic link (ln -s equivalent). Creates a symbolic (soft) link from link_path to target. The target doesn't need to exist when creating the symlink. Symlinks can point to files or directories and can cross filesystem boundaries. If the target is moved or deleted, the symlink becomes broken.",
                 "inputSchema": {
                     "type": "object",
@@ -408,7 +408,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_basename",
+                "name": "fileio_get_basename",
                 "description": "Extract the filename (basename) from a path. Returns just the final component of the path. Examples: '/path/to/file.txt' -> 'file.txt', 'file.txt' -> 'file.txt', '/usr/bin/' -> 'bin'. Useful for getting just the filename without the directory path.",
                 "inputSchema": {
                     "type": "object",
@@ -422,7 +422,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_dirname",
+                "name": "fileio_get_dirname",
                 "description": "Extract the directory path (dirname) from a path. Returns the directory portion without the filename. Examples: '/path/to/file.txt' -> '/path/to', 'file.txt' -> '', '/usr/bin/' -> '/usr'. Returns empty string if no directory component exists.",
                 "inputSchema": {
                     "type": "object",
@@ -436,7 +436,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_realpath",
+                "name": "fileio_get_canonical_path",
                 "description": "Get the canonical (absolute, real) path, resolving all symbolic links and relative components. Returns the absolute path with all symlinks resolved and '..' and '.' components normalized. The path must exist. Useful for getting the true location of a file regardless of symlinks.",
                 "inputSchema": {
                     "type": "object",
@@ -450,7 +450,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_readlink",
+                "name": "fileio_read_symbolic_link",
                 "description": "Read the target path of a symbolic link. Returns the path that the symlink points to. The symlink must exist and be a symbolic link (not a regular file or directory). Returns the target path as stored in the symlink, which may be relative or absolute.",
                 "inputSchema": {
                     "type": "object",
@@ -464,7 +464,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_mktemp",
+                "name": "fileio_create_temporary",
                 "description": "Create a temporary file or directory (mktemp equivalent). Creates a uniquely named temporary file or directory and returns its path. The file/directory is created and persists (not automatically deleted). Use this when you need a temporary location for intermediate files. If template is provided, creates the temp file/dir in that directory; otherwise uses the system temp directory.",
                 "inputSchema": {
                     "type": "object",
@@ -483,7 +483,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_chown",
+                "name": "fileio_change_ownership",
                 "description": "Change file or directory ownership (chown equivalent). Changes the owner and/or group of a file or directory. Currently supports numeric UID/GID only (username/groupname resolution not implemented). At least one of user or group must be provided. Requires appropriate permissions (typically root or file owner). Works on Unix-like systems only.",
                 "inputSchema": {
                     "type": "object",
@@ -505,7 +505,7 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_chroot",
+                "name": "fileio_change_root",
                 "description": "Change root directory (chroot equivalent). Changes the root directory of the current process to the specified path. This is a system-level operation that requires root privileges. After chroot, the process can only access files within the new root directory. The new_root must exist and be a directory. This operation affects the entire process and cannot be undone. Use with extreme caution.",
                 "inputSchema": {
                     "type": "object",
@@ -516,6 +516,42 @@ impl ToolRegistry {
                         }
                     },
                     "required": ["new_root"]
+                }
+            },
+            {
+                "name": "fileio_get_current_directory",
+                "description": "Get the current working directory (pwd equivalent). Returns the absolute path of the current working directory. Useful for determining where relative paths will be resolved from, or for getting the current location in the file system.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "fileio_count_lines",
+                "description": "Count the number of lines in a file. Returns the total line count (newline-separated). Useful for getting line counts in code files, logs, or any text file. A file with no newlines counts as 1 line.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to count lines in. Must exist and be a file (not directory)."
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "fileio_count_words",
+                "description": "Count the number of words in a file. Returns the total word count (whitespace-separated). Useful for text analysis, document statistics, or content metrics. Words are separated by any whitespace (spaces, tabs, newlines).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to count words in. Must exist and be a file (not directory)."
+                        }
+                    },
+                    "required": ["path"]
                 }
             }
         ])
@@ -588,7 +624,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_set_file_mode" | "fileio_set_mode" => {
+            "fileio_set_permissions" | "fileio_set_mode" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -615,7 +651,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_get_mode" => {
+            "fileio_get_permissions" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -675,7 +711,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_mkdir" => {
+            "fileio_make_directory" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -720,7 +756,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_file_find" => {
+            "fileio_find_files" => {
                 let pattern = args
                     .get("pattern")
                     .and_then(|v| v.as_str())
@@ -826,7 +862,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_cp" => {
+            "fileio_copy" => {
                 let source = args
                     .get("source")
                     .and_then(|v| v.as_str())
@@ -854,7 +890,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_mv" => {
+            "fileio_move" => {
                 let source = args
                     .get("source")
                     .and_then(|v| v.as_str())
@@ -881,7 +917,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_rm" => {
+            "fileio_remove" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -902,7 +938,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_rmdir" => {
+            "fileio_remove_directory" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -922,7 +958,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_ln" => {
+            "fileio_create_hard_link" => {
                 let target = args
                     .get("target")
                     .and_then(|v| v.as_str())
@@ -949,7 +985,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_symlink" => {
+            "fileio_create_symbolic_link" => {
                 let target = args
                     .get("target")
                     .and_then(|v| v.as_str())
@@ -976,7 +1012,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_basename" => {
+            "fileio_get_basename" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -995,7 +1031,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_dirname" => {
+            "fileio_get_dirname" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -1014,7 +1050,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_realpath" => {
+            "fileio_get_canonical_path" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -1033,7 +1069,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_readlink" => {
+            "fileio_read_symbolic_link" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -1052,7 +1088,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_mktemp" => {
+            "fileio_create_temporary" => {
                 let temp_type = args
                     .get("type")
                     .and_then(|v| v.as_str())
@@ -1081,7 +1117,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_chown" => {
+            "fileio_change_ownership" => {
                 let path = args
                     .get("path")
                     .and_then(|v| v.as_str())
@@ -1102,7 +1138,7 @@ impl ToolRegistry {
                     }]
                 }))
             }
-            "fileio_chroot" => {
+            "fileio_change_root" => {
                 let new_root = args
                     .get("new_root")
                     .and_then(|v| v.as_str())
@@ -1118,6 +1154,54 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": "Root directory changed successfully"
+                    }]
+                }))
+            }
+            "fileio_get_current_directory" => {
+                let cwd = crate::operations::pwd::pwd()?;
+
+                Ok(serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": cwd
+                    }]
+                }))
+            }
+            "fileio_count_lines" => {
+                let path = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        crate::error::McpError::InvalidToolParameters(
+                            "Missing required parameter: path".to_string(),
+                        )
+                    })?;
+
+                let count = crate::operations::count_lines::count_lines(path)?;
+
+                Ok(serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": count.to_string()
+                    }]
+                }))
+            }
+            "fileio_count_words" => {
+                let path = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        crate::error::McpError::InvalidToolParameters(
+                            "Missing required parameter: path".to_string(),
+                        )
+                    })?;
+
+                let count = crate::operations::count_words::count_words(path)?;
+
+                Ok(serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": count.to_string()
                     }]
                 }))
             }

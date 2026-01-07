@@ -4,6 +4,8 @@
 
 pub mod chown;
 pub mod chroot;
+pub mod count_lines;
+pub mod count_words;
 pub mod cp;
 pub mod find_in_files;
 pub mod file_find;
@@ -16,6 +18,7 @@ pub mod mktemp;
 pub mod mv;
 pub mod patch_file;
 pub mod path_utils;
+pub mod pwd;
 pub mod read_lines;
 pub mod rm;
 pub mod rmdir;
