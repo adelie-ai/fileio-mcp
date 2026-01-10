@@ -82,7 +82,7 @@ pub fn symlink(target: &str, link_path: &str) -> Result<()> {
                 ErrorKind::PermissionDenied => {
                     crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
                         "Permission denied when creating symbolic link {} to {}: {}",
-                        expanded_link, target, e
+                expanded_link, target, e
                     )))
                 }
                 ErrorKind::AlreadyExists => {

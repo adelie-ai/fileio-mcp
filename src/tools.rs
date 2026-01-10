@@ -25,7 +25,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to read. Must exist and be readable."
+                            "description": "Path to the file to read. Must exist and be readable. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to read a specific file, use an absolute path or verify the working directory first."
                         },
                         "start_line": {
                             "type": "number",
@@ -55,7 +55,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to write. Parent directories will be created if they don't exist."
+                            "description": "Path to the file to write. Parent directories will be created if they don't exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to write to a specific file, use an absolute path or verify the working directory first."
                         },
                         "content": {
                             "type": "string",
@@ -77,7 +77,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file or directory whose permissions to change"
+                            "description": "Path to the file or directory whose permissions to change. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to modify a specific file, use an absolute path or verify the working directory first."
                         },
                         "mode": {
                             "type": "string",
@@ -95,7 +95,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file or directory whose permissions to change"
+                            "description": "Path to the file or directory whose permissions to change. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to modify a specific file, use an absolute path or verify the working directory first."
                         },
                         "mode": {
                             "type": "string",
@@ -113,7 +113,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file or directory to query. Must exist."
+                            "description": "Path to the file or directory to query. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to query a specific file, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
@@ -127,7 +127,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to touch. Parent directories will be created if they don't exist."
+                            "description": "Path to the file to touch. Parent directories will be created if they don't exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to touch a specific file, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
@@ -141,7 +141,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file or directory to query. Must exist."
+                            "description": "Path to the file or directory to query. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to query a specific file, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
@@ -155,7 +155,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the directory to create. Can be a nested path like '/a/b/c'."
+                            "description": "Path to the directory to create. Can be a nested path like '/a/b/c'. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to create a specific directory, use an absolute path or verify the working directory first."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -173,7 +173,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the directory to list. Must exist and be a directory."
+                            "description": "Path to the directory to list. Must exist and be a directory. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to list a specific directory, use an absolute path or verify the working directory first."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -199,7 +199,7 @@ impl ToolRegistry {
                         },
                         "root": {
                             "type": "string",
-                            "description": "Root directory to start searching from. Default: current directory ('.')."
+                            "description": "Root directory to start searching from. Default: current directory ('.'). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to search a specific directory, use an absolute path or verify the working directory first."
                         },
                         "max_depth": {
                             "type": "number",
@@ -226,7 +226,7 @@ impl ToolRegistry {
                         },
                         "path": {
                             "type": "string",
-                            "description": "Directory or file path to search in. If a file, searches only that file. If a directory, searches recursively through all files."
+                            "description": "Directory or file path to search in. If a file, searches only that file. If a directory, searches recursively through all files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to search a specific location, use an absolute path or verify the working directory first."
                         },
                         "case_sensitive": {
                             "type": "boolean",
@@ -276,7 +276,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to patch. Must exist."
+                            "description": "Path to the file to patch. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to patch a specific file, use an absolute path or verify the working directory first."
                         },
                         "patch": {
                             "type": "string",
@@ -299,11 +299,11 @@ impl ToolRegistry {
                     "properties": {
                         "source": {
                             "type": "string",
-                            "description": "Source file or directory path to copy, or glob pattern (e.g., '*.txt', 'file?.log', 'dir/*.rs'). Must exist or match existing files."
+                            "description": "Source file or directory path to copy, or glob pattern (e.g., '*.txt', 'file?.log', 'dir/*.rs'). Must exist or match existing files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to copy a specific file, use an absolute path or verify the working directory first."
                         },
                         "destination": {
                             "type": "string",
-                            "description": "Destination path. For glob patterns: must be a directory. For single files: can be a file path or directory (source name preserved). For directories: must be a directory path or new directory name."
+                            "description": "Destination path. For glob patterns: must be a directory. For single files: can be a file path or directory (source name preserved). For directories: must be a directory path or new directory name. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -321,11 +321,11 @@ impl ToolRegistry {
                     "properties": {
                         "source": {
                             "type": "string",
-                            "description": "Source file or directory path to move, or glob pattern (e.g., '*.txt', 'file?.log', 'dir/*.rs'). Must exist or match existing files."
+                            "description": "Source file or directory path to move, or glob pattern (e.g., '*.txt', 'file?.log', 'dir/*.rs'). Must exist or match existing files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to move a specific file, use an absolute path or verify the working directory first."
                         },
                         "destination": {
                             "type": "string",
-                            "description": "Destination path. For glob patterns: must be a directory. For single files: can be a file path (rename) or directory path (move into directory). Parent directories will be created if needed."
+                            "description": "Destination path. For glob patterns: must be a directory. For single files: can be a file path (rename) or directory path (move into directory). Parent directories will be created if needed. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["source", "destination"]
@@ -339,7 +339,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to file or directory to remove, or glob pattern (e.g., '*.tmp', 'file?.log', 'dir/*.bak'). Must exist or match existing files unless force=true."
+                            "description": "Path to file or directory to remove, or glob pattern (e.g., '*.tmp', 'file?.log', 'dir/*.bak'). Must exist or match existing files unless force=true. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to remove a specific file, use an absolute path or verify the working directory first."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -361,7 +361,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to directory to remove. Must exist and be a directory."
+                            "description": "Path to directory to remove. Must exist and be a directory. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to remove a specific directory, use an absolute path or verify the working directory first."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -379,11 +379,11 @@ impl ToolRegistry {
                     "properties": {
                         "target": {
                             "type": "string",
-                            "description": "Target file path to link to. Must exist and be a file (not directory)."
+                            "description": "Target file path to link to. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to link to a specific file, use an absolute path or verify the working directory first."
                         },
                         "link_path": {
                             "type": "string",
-                            "description": "Path where the hard link will be created. Parent directories will be created if needed."
+                            "description": "Path where the hard link will be created. Parent directories will be created if needed. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["target", "link_path"]
@@ -397,11 +397,11 @@ impl ToolRegistry {
                     "properties": {
                         "target": {
                             "type": "string",
-                            "description": "Target file or directory path that the symlink will point to. Can be relative or absolute. Doesn't need to exist."
+                            "description": "Target file or directory path that the symlink will point to. Can be relative or absolute. Doesn't need to exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to link to a specific file, use an absolute path or verify the working directory first."
                         },
                         "link_path": {
                             "type": "string",
-                            "description": "Path where the symbolic link will be created. Parent directories will be created if needed."
+                            "description": "Path where the symbolic link will be created. Parent directories will be created if needed. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["target", "link_path"]
@@ -415,7 +415,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to extract basename from. Can be absolute or relative."
+                            "description": "Path to extract basename from. Can be absolute or relative. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["path"]
@@ -429,7 +429,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to extract dirname from. Can be absolute or relative."
+                            "description": "Path to extract dirname from. Can be absolute or relative. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["path"]
@@ -443,7 +443,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to canonicalize. Can be relative or absolute, and can contain symlinks. Must exist."
+                            "description": "Path to canonicalize. Can be relative or absolute, and can contain symlinks. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to canonicalize a specific file, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
@@ -457,7 +457,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the symbolic link to read. Must exist and be a symbolic link."
+                            "description": "Path to the symbolic link to read. Must exist and be a symbolic link. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to read a specific symlink, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
@@ -476,7 +476,7 @@ impl ToolRegistry {
                         },
                         "template": {
                             "type": "string",
-                            "description": "Optional directory path where to create the temporary file/directory. If not provided, uses the system temporary directory. The directory must exist."
+                            "description": "Optional directory path where to create the temporary file/directory. If not provided, uses the system temporary directory. The directory must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["type"]
@@ -490,7 +490,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to file or directory whose ownership to change. Must exist."
+                            "description": "Path to file or directory whose ownership to change. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to change ownership of a specific file, use an absolute path or verify the working directory first."
                         },
                         "user": {
                             "type": "string",
@@ -512,7 +512,7 @@ impl ToolRegistry {
                     "properties": {
                         "new_root": {
                             "type": "string",
-                            "description": "New root directory path. Must exist and be a directory. Requires root/administrator privileges."
+                            "description": "New root directory path. Must exist and be a directory. Requires root/administrator privileges. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["new_root"]
@@ -534,7 +534,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to count lines in. Must exist and be a file (not directory)."
+                            "description": "Path to the file to count lines in. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to count lines in a specific file, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
@@ -548,7 +548,7 @@ impl ToolRegistry {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to count words in. Must exist and be a file (not directory)."
+                            "description": "Path to the file to count words in. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to count words in a specific file, use an absolute path or verify the working directory first."
                         }
                     },
                     "required": ["path"]
