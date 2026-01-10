@@ -18,7 +18,7 @@ pub fn read_lines(
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
     let file = File::open(&expanded_path)
-        .map_err(|e| FileIoError::ReadError(format!("Failed to open file {}: {}", expanded_path, e)))?;
+        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("open file", &expanded_path, e)))?;
 
     let reader = BufReader::new(file);
     let lines: Vec<String> = reader

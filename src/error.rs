@@ -110,3 +110,28 @@ pub enum TransportError {
 
 /// Result type alias for convenience
 pub type Result<T> = std::result::Result<T, FileIoMcpError>;
+
+impl FileIoError {
+    /// Map a std::io::Error to a more specific FileIoError based on the error kind
+    pub fn from_io_error(operation: &str, path: &str, error: std::io::Error) -> Self {
+        use std::io::ErrorKind;
+        match error.kind() {
+            ErrorKind::NotFound => {
+                FileIoError::NotFound(format!("{} not found: {}", operation, path))
+            }
+            ErrorKind::PermissionDenied => {
+                FileIoError::PermissionDenied(format!("Permission denied when {}: {}", operation, path))
+            }
+            ErrorKind::AlreadyExists => {
+                FileIoError::WriteError(format!("{} already exists: {}", operation, path))
+            }
+            ErrorKind::InvalidInput => {
+                FileIoError::InvalidPath(format!("Invalid input for {}: {} ({})", operation, path, error))
+            }
+            _ => {
+                // For other errors, include the original error message
+                FileIoError::WriteError(format!("Failed to {} {}: {}", operation, path, error))
+            }
+        }
+    }
+}

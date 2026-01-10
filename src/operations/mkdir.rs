@@ -12,11 +12,20 @@ pub fn mkdir(path: &str, recursive: bool) -> Result<()> {
         .map(|expanded| expanded.into_owned())?;
     if recursive {
         fs::create_dir_all(&expanded_path).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to create directory {}: {}", expanded_path, e))
+            crate::error::FileIoMcpError::from(FileIoError::from_io_error("create directory", &expanded_path, e))
         })?;
     } else {
         fs::create_dir(&expanded_path).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to create directory {}: {}", expanded_path, e))
+            use std::io::ErrorKind;
+            match e.kind() {
+                ErrorKind::AlreadyExists => {
+                    FileIoError::WriteError(format!(
+                        "Directory already exists: {}. Use recursive=true to create parent directories or if directory may already exist",
+                        expanded_path
+                    )).into()
+                }
+                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("create directory", &expanded_path, e))
+            }
         })?;
     }
 

@@ -47,7 +47,7 @@ pub fn realpath(path: &str) -> Result<String> {
     }
 
     let canonical = fs::canonicalize(&expanded_path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to canonicalize path {}: {}", expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("canonicalize path", &expanded_path, e))
     })?;
 
     canonical
@@ -75,7 +75,7 @@ pub fn readlink(path: &str) -> Result<String> {
     }
 
     let target = fs::read_link(&expanded_path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read symbolic link {}: {}", expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read symbolic link", &expanded_path, e))
     })?;
     target
         .to_str()

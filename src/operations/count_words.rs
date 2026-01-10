@@ -22,7 +22,7 @@ pub fn count_words(path: &str) -> Result<u64> {
     }
 
     let content = fs::read_to_string(&expanded_path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read file {}: {}", expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", &expanded_path, e))
     })?;
 
     let word_count = content.split_whitespace().count() as u64;

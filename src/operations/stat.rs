@@ -33,7 +33,7 @@ pub fn stat(path: &str) -> Result<FileStat> {
     }
 
     let metadata = fs::metadata(&expanded_path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read metadata", &expanded_path, e))
     })?;
 
     let entry_type = if path_obj.is_dir() {

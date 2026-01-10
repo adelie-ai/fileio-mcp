@@ -32,7 +32,25 @@ pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
     }
 
     fs::hard_link(&expanded_target, &expanded_link).map_err(|e| {
-        FileIoError::WriteError(format!("Failed to create hard link {} to {}: {}", expanded_link, expanded_target, e))
+        use std::io::ErrorKind;
+        match e.kind() {
+            ErrorKind::PermissionDenied => {
+                crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
+                    "Permission denied when creating hard link {} to {}: {}",
+                    expanded_link, expanded_target, e
+                )))
+            }
+            ErrorKind::NotFound => {
+                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("Target not found when creating hard link: {}", expanded_target)))
+            }
+            ErrorKind::AlreadyExists => {
+                crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+                    "Hard link already exists: {}. Cannot create duplicate link to {}",
+                    expanded_link, expanded_target
+                )))
+            }
+            _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("create hard link", &format!("{} to {}", expanded_link, expanded_target), e))
+        }
     })?;
 
     Ok(())
@@ -59,10 +77,22 @@ pub fn symlink(target: &str, link_path: &str) -> Result<()> {
     {
         use std::os::unix::fs::symlink;
         symlink(target, &expanded_link).map_err(|e| {
-            FileIoError::WriteError(format!(
-                "Failed to create symbolic link {} to {}: {}",
-                expanded_link, target, e
-            ))
+            use std::io::ErrorKind;
+            match e.kind() {
+                ErrorKind::PermissionDenied => {
+                    crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
+                        "Permission denied when creating symbolic link {} to {}: {}",
+                        expanded_link, target, e
+                    )))
+                }
+                ErrorKind::AlreadyExists => {
+                    crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+                        "Symbolic link already exists: {}. Cannot create duplicate link to {}",
+                        expanded_link, target
+                    )))
+                }
+                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("create symbolic link", &format!("{} to {}", expanded_link, target), e))
+            }
         })?;
     }
 

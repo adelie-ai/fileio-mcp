@@ -104,12 +104,24 @@ fn cp_single(source: &str, destination: &str, recursive: bool) -> Result<()> {
     if source_path.is_file() {
         // Copy file
         fs::copy(source, destination).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to copy file {} to {}: {}", source, destination, e))
+            use std::io::ErrorKind;
+            match e.kind() {
+                ErrorKind::PermissionDenied => {
+                    crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
+                        "Permission denied when copying {} to {}: {}",
+                        source, destination, e
+                    )))
+                }
+                ErrorKind::NotFound => {
+                    crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("Source file not found: {}", source)))
+                }
+                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("copy file", &format!("{} to {}", source, destination), e))
+            }
         })?;
     } else if source_path.is_dir() {
         if !recursive {
             return Err(FileIoError::InvalidPath(
-                "Cannot copy directory without recursive flag".to_string(),
+                format!("Cannot copy directory {} without recursive flag. Set recursive=true to copy directories", source)
             )
             .into());
         }

@@ -26,7 +26,7 @@ pub fn patch_file(path: &str, patch: &str, format: Option<&str>) -> Result<()> {
 fn apply_unified_diff(path: &str, diff: &str) -> Result<()> {
     // Read current file content
     let current_content = fs::read_to_string(path)
-        .map_err(|e| FileIoError::ReadError(format!("Failed to read file {}: {}", path, e)))?;
+        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", path, e)))?;
 
     let lines: Vec<&str> = current_content.lines().collect();
     let mut new_lines = Vec::new();
@@ -66,7 +66,7 @@ fn apply_unified_diff(path: &str, diff: &str) -> Result<()> {
     // Write patched content
     let new_content = new_lines.join("\n");
     fs::write(path, new_content).map_err(|e| {
-        FileIoError::WriteError(format!("Failed to write patched file {}: {}", path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("write patched file", path, e))
     })?;
 
     Ok(())
@@ -81,7 +81,7 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
 
     // Read current file content
     let current_content = fs::read_to_string(path)
-        .map_err(|e| FileIoError::ReadError(format!("Failed to read file {}: {}", path, e)))?;
+        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", path, e)))?;
 
     let mut lines: Vec<String> = current_content.lines().map(|s| s.to_string()).collect();
 
@@ -149,7 +149,7 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
     // Write patched content
     let new_content = lines.join("\n");
     fs::write(path, new_content).map_err(|e| {
-        FileIoError::WriteError(format!("Failed to write patched file {}: {}", path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("write patched file", path, e))
     })?;
 
     Ok(())

@@ -15,13 +15,25 @@ pub fn set_file_mode(path: &str, mode: &str) -> Result<()> {
         .map(|expanded| expanded.into_owned())?;
 
     let metadata = fs::metadata(&expanded_path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read metadata", &expanded_path, e))
     })?;
 
     let mut permissions = metadata.permissions();
     permissions.set_mode(mode_value);
     fs::set_permissions(&expanded_path, permissions).map_err(|e| {
-        FileIoError::InvalidMode(format!("Failed to set permissions for {}: {}", expanded_path, e))
+        use std::io::ErrorKind;
+        match e.kind() {
+            ErrorKind::PermissionDenied => {
+                crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
+                    "Permission denied when setting permissions for {}: {}",
+                    expanded_path, e
+                )))
+            }
+            ErrorKind::NotFound => {
+                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("File not found when setting permissions: {}", expanded_path)))
+            }
+            _ => crate::error::FileIoMcpError::from(FileIoError::InvalidMode(format!("Failed to set permissions for {}: {}", expanded_path, e)))
+        }
     })?;
 
     Ok(())

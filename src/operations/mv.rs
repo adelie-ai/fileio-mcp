@@ -112,7 +112,19 @@ fn mv_single(source: &str, destination: &str) -> Result<()> {
     }
 
     fs::rename(source, destination).map_err(|e| {
-        FileIoError::WriteError(format!("Failed to move {} to {}: {}", source, destination, e))
+        use std::io::ErrorKind;
+        match e.kind() {
+            ErrorKind::PermissionDenied => {
+                crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
+                    "Permission denied when moving {} to {}: {}",
+                    source, destination, e
+                )))
+            }
+            ErrorKind::NotFound => {
+                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("Source not found when moving: {}", source)))
+            }
+            _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("move", &format!("{} to {}", source, destination), e))
+        }
     })?;
 
     Ok(())

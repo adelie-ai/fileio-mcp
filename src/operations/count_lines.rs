@@ -23,7 +23,7 @@ pub fn count_lines(path: &str) -> Result<u64> {
     }
 
     let file = File::open(&expanded_path)
-        .map_err(|e| FileIoError::ReadError(format!("Failed to open file {}: {}", expanded_path, e)))?;
+        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("open file", &expanded_path, e)))?;
 
     let reader = BufReader::new(file);
     let line_count = reader.lines().count() as u64;

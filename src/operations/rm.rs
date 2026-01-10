@@ -101,16 +101,40 @@ fn rm_single(path: &str, recursive: bool, force: bool) -> Result<()> {
 
     if path_obj.is_file() || path_obj.is_symlink() {
         fs::remove_file(path).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to remove file {}: {}", path, e))
+            crate::error::FileIoMcpError::from(FileIoError::from_io_error("remove file", path, e))
         })?;
     } else if path_obj.is_dir() {
         if recursive {
             fs::remove_dir_all(path).map_err(|e| {
-                FileIoError::WriteError(format!("Failed to remove directory {}: {}", path, e))
+                use std::io::ErrorKind;
+                match e.kind() {
+                    ErrorKind::PermissionDenied => {
+                        FileIoError::PermissionDenied(format!(
+                            "Permission denied when removing directory: {}",
+                            path
+                        )).into()
+                    }
+                    _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("remove directory", path, e))
+                }
             })?;
         } else {
             fs::remove_dir(path).map_err(|e| {
-                FileIoError::WriteError(format!("Failed to remove directory {}: {}", path, e))
+                use std::io::ErrorKind;
+                match e.kind() {
+                    ErrorKind::PermissionDenied => {
+                        FileIoError::PermissionDenied(format!(
+                            "Permission denied when removing directory: {}",
+                            path
+                        )).into()
+                    }
+                    ErrorKind::InvalidInput => {
+                        FileIoError::WriteError(format!(
+                            "Directory is not empty: {}. Use recursive=true to remove non-empty directories",
+                            path
+                        )).into()
+                    }
+                    _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("remove directory", path, e))
+                }
             })?;
         }
     }
