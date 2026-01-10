@@ -7,11 +7,14 @@ use std::fs;
 
 /// Apply a patch to a file
 pub fn patch_file(path: &str, patch: &str, format: Option<&str>) -> Result<()> {
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
     let format = format.unwrap_or("unified_diff");
 
     match format {
-        "unified_diff" => apply_unified_diff(path, patch),
-        "add_remove_lines" => apply_add_remove_lines(path, patch),
+        "unified_diff" => apply_unified_diff(&expanded_path, patch),
+        "add_remove_lines" => apply_add_remove_lines(&expanded_path, patch),
         _ => Err(FileIoError::PatchError(format!(
             "Unknown patch format: {}",
             format

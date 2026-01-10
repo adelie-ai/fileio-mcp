@@ -13,10 +13,18 @@ pub fn file_find(
     max_depth: Option<usize>,
     file_type: Option<&str>,
 ) -> Result<Vec<String>> {
-    let root_path = root.map(Path::new).unwrap_or_else(|| Path::new("."));
+    let expanded_root = root.map(|r| {
+        shellexpand::full(r)
+            .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}': {}", r, e))))
+            .map(|expanded| expanded.into_owned())
+    }).transpose()?;
+    let root_path = expanded_root
+        .as_ref()
+        .map(|r| Path::new(r))
+        .unwrap_or_else(|| Path::new("."));
 
     if !root_path.exists() {
-        return Err(FileIoError::NotFound(root.unwrap_or(".").to_string()).into());
+        return Err(FileIoError::NotFound(expanded_root.unwrap_or_else(|| ".".to_string())).into());
     }
 
     let mut walker = WalkBuilder::new(root_path);

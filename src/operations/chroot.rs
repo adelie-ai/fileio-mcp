@@ -7,16 +7,19 @@ use std::path::Path;
 
 /// Change root directory (chroot)
 pub fn chroot(new_root: &str) -> Result<()> {
-    let path_obj = Path::new(new_root);
+    let expanded_root = shellexpand::full(new_root)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", new_root, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_root);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(new_root.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_root.to_string()).into());
     }
 
     if !path_obj.is_dir() {
         return Err(FileIoError::InvalidPath(format!(
             "{} is not a directory",
-            new_root
+            expanded_root
         ))
         .into());
     }
@@ -26,7 +29,7 @@ pub fn chroot(new_root: &str) -> Result<()> {
         use nix::unistd::chroot;
 
         chroot(path_obj).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to change root to {}: {}", new_root, e))
+            FileIoError::WriteError(format!("Failed to change root to {}: {}", expanded_root, e))
         })?;
     }
 

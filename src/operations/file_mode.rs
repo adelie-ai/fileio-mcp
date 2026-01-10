@@ -10,15 +10,18 @@ use std::os::unix::fs::PermissionsExt;
 pub fn set_file_mode(path: &str, mode: &str) -> Result<()> {
     // Parse mode string - support both octal and symbolic
     let mode_value = parse_mode(mode)?;
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
 
-    let metadata = fs::metadata(path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", path, e))
+    let metadata = fs::metadata(&expanded_path).map_err(|e| {
+        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", expanded_path, e))
     })?;
 
     let mut permissions = metadata.permissions();
     permissions.set_mode(mode_value);
-    fs::set_permissions(path, permissions).map_err(|e| {
-        FileIoError::InvalidMode(format!("Failed to set permissions for {}: {}", path, e))
+    fs::set_permissions(&expanded_path, permissions).map_err(|e| {
+        FileIoError::InvalidMode(format!("Failed to set permissions for {}: {}", expanded_path, e))
     })?;
 
     Ok(())

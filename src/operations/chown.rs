@@ -7,10 +7,13 @@ use std::path::Path;
 
 /// Change file or directory ownership
 pub fn chown(path: &str, user: Option<&str>, group: Option<&str>) -> Result<()> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::InvalidPath(format!("Failed to expand path '{}': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
     #[cfg(unix)]
@@ -51,7 +54,7 @@ pub fn chown(path: &str, user: Option<&str>, group: Option<&str>) -> Result<()> 
         };
 
         nix::unistd::chown(path_obj, uid, gid).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to change ownership of {}: {}", path, e))
+            FileIoError::WriteError(format!("Failed to change ownership of {}: {}", &expanded_path, e))
         })?;
     }
 

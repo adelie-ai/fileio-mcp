@@ -9,8 +9,11 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Get file mode (permissions) as octal string
 pub fn get_file_mode(path: &str) -> Result<String> {
-    let metadata = fs::metadata(path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", path, e))
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let metadata = fs::metadata(&expanded_path).map_err(|e| {
+        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", expanded_path, e))
     })?;
 
     #[cfg(unix)]

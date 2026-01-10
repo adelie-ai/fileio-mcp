@@ -10,12 +10,15 @@ use tempfile::{NamedTempFile, TempDir};
 pub fn mktemp_file(template: Option<&str>) -> Result<String> {
     if let Some(tmpl) = template {
         // If template provided, create in specified directory
-        let path = Path::new(tmpl);
+        let expanded_tmpl = shellexpand::full(tmpl)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", tmpl, e))))
+        .map(|expanded| expanded.into_owned())?;
+        let path = Path::new(&expanded_tmpl);
         let parent = path.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to create parent directory for template {}: {}",
-                tmpl, e
+                expanded_tmpl, e
             ))
         })?;
         let file = NamedTempFile::new_in(parent).map_err(|e| {
@@ -42,12 +45,15 @@ pub fn mktemp_file(template: Option<&str>) -> Result<String> {
 pub fn mktemp_dir(template: Option<&str>) -> Result<String> {
     if let Some(tmpl) = template {
         // If template provided, create in specified directory
-        let path = Path::new(tmpl);
+        let expanded_tmpl = shellexpand::full(tmpl)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", tmpl, e))))
+        .map(|expanded| expanded.into_owned())?;
+        let path = Path::new(&expanded_tmpl);
         let parent = path.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to create parent directory for template {}: {}",
-                tmpl, e
+                expanded_tmpl, e
             ))
         })?;
         let dir = TempDir::new_in(parent).map_err(|e| {

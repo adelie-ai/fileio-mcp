@@ -14,7 +14,10 @@ fn is_glob_pattern(s: &str) -> bool {
 
 /// Expand glob pattern to matching paths
 fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
-    let path = Path::new(pattern);
+    let expanded_pattern = shellexpand::full(pattern)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", pattern, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path = Path::new(&expanded_pattern);
     let (base_dir, glob_str) = if let Some(parent) = path.parent() {
         if parent.as_os_str().is_empty() {
             (Path::new("."), path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern))
@@ -51,7 +54,10 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
 
 /// Copy a file or directory (supports glob patterns)
 pub fn cp(source: &str, destination: &str, recursive: bool) -> Result<()> {
-    let dest_path = Path::new(destination);
+    let expanded_dest = shellexpand::full(destination)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", destination, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let dest_path = Path::new(&expanded_dest);
     let dest_is_dir = dest_path.exists() && dest_path.is_dir();
 
     // Check if source contains glob patterns

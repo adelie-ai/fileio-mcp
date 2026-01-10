@@ -8,37 +8,46 @@ use std::path::Path;
 
 /// Get the basename (filename) from a path
 pub fn basename(path: &str) -> Result<String> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
     path_obj
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            FileIoError::InvalidPath(format!("Cannot extract basename from path: {}", path)).into()
+            FileIoError::InvalidPath(format!("Cannot extract basename from path: {}", expanded_path)).into()
         })
 }
 
 /// Get the dirname (directory path) from a path
 pub fn dirname(path: &str) -> Result<String> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
     path_obj
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| {
-            FileIoError::InvalidPath(format!("Cannot extract dirname from path: {}", path)).into()
+            FileIoError::InvalidPath(format!("Cannot extract dirname from path: {}", expanded_path)).into()
         })
 }
 
 /// Get the real (canonical) path, resolving all symlinks
 pub fn realpath(path: &str) -> Result<String> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
-    let canonical = fs::canonicalize(path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to canonicalize path {}: {}", path, e))
+    let canonical = fs::canonicalize(&expanded_path).map_err(|e| {
+        FileIoError::ReadError(format!("Failed to canonicalize path {}: {}", expanded_path, e))
     })?;
 
     canonical
@@ -52,18 +61,21 @@ pub fn realpath(path: &str) -> Result<String> {
 
 /// Read the target of a symbolic link
 pub fn readlink(path: &str) -> Result<String> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
     if !path_obj.is_symlink() {
-        return Err(FileIoError::InvalidPath(format!("{} is not a symbolic link", path)).into());
+        return Err(FileIoError::InvalidPath(format!("{} is not a symbolic link", expanded_path)).into());
     }
 
-    let target = fs::read_link(path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read symbolic link {}: {}", path, e))
+    let target = fs::read_link(&expanded_path).map_err(|e| {
+        FileIoError::ReadError(format!("Failed to read symbolic link {}: {}", expanded_path, e))
     })?;
     target
         .to_str()

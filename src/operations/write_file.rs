@@ -8,14 +8,17 @@ use std::path::Path;
 
 /// Write content to a file
 pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     // Create parent directories if they don't exist
     if let Some(parent) = path_obj.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to create parent directories for {}: {}",
-                path, e
+                expanded_path, e
             ))
         })?;
     }
@@ -27,23 +30,23 @@ pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
+            .open(&expanded_path)
             .map_err(|e| {
-                FileIoError::WriteError(format!("Failed to open file {} for appending: {}", path, e))
+                FileIoError::WriteError(format!("Failed to open file {} for appending: {}", expanded_path, e))
             })?;
 
         file.write_all(content.as_bytes())
-            .map_err(|e| FileIoError::WriteError(format!("Failed to write to file {}: {}", path, e)))?;
+            .map_err(|e| FileIoError::WriteError(format!("Failed to write to file {}: {}", expanded_path, e)))?;
     } else {
         // Atomic write: write to temp file, then rename
-        let temp_path = format!("{}.tmp", path);
+        let temp_path = format!("{}.tmp", expanded_path);
         fs::write(&temp_path, content).map_err(|e| {
             FileIoError::WriteError(format!("Failed to write to temp file {}: {}", temp_path, e))
         })?;
-        fs::rename(&temp_path, path).map_err(|e| {
+        fs::rename(&temp_path, &expanded_path).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to rename temp file {} to {}: {}",
-                temp_path, path, e
+                temp_path, expanded_path, e
             ))
         })?;
     }

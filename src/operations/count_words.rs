@@ -8,18 +8,21 @@ use std::path::Path;
 
 /// Count words in a file (whitespace-separated)
 pub fn count_words(path: &str) -> Result<u64> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
     if !path_obj.is_file() {
-        return Err(FileIoError::InvalidPath(format!("{} is not a file", path)).into());
+        return Err(FileIoError::InvalidPath(format!("{} is not a file", expanded_path)).into());
     }
 
-    let content = fs::read_to_string(path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read file {}: {}", path, e))
+    let content = fs::read_to_string(&expanded_path).map_err(|e| {
+        FileIoError::ReadError(format!("Failed to read file {}: {}", expanded_path, e))
     })?;
 
     let word_count = content.split_whitespace().count() as u64;

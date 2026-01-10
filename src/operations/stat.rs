@@ -23,14 +23,17 @@ pub struct FileStat {
 
 /// Get file or directory statistics
 pub fn stat(path: &str) -> Result<FileStat> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
-    let metadata = fs::metadata(path).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", path, e))
+    let metadata = fs::metadata(&expanded_path).map_err(|e| {
+        FileIoError::ReadError(format!("Failed to read metadata for {}: {}", expanded_path, e))
     })?;
 
     let entry_type = if path_obj.is_dir() {
@@ -94,7 +97,7 @@ pub fn stat(path: &str) -> Result<FileStat> {
         });
 
     Ok(FileStat {
-        path: path.to_string(),
+        path: expanded_path.clone(),
         entry_type,
         size: metadata.len(),
         mode,

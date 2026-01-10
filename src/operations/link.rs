@@ -8,25 +8,31 @@ use std::path::Path;
 
 /// Create a hard link
 pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
-    let target_path = Path::new(target);
+    let expanded_target = shellexpand::full(target)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", target, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let expanded_link = shellexpand::full(link_path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", link_path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let target_path = Path::new(&expanded_target);
 
     if !target_path.exists() {
-        return Err(FileIoError::NotFound(target.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_target.to_string()).into());
     }
 
     // Create parent directories if needed
-    let link_path_obj = Path::new(link_path);
+    let link_path_obj = Path::new(&expanded_link);
     if let Some(parent) = link_path_obj.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to create parent directories for {}: {}",
-                link_path, e
+                expanded_link, e
             ))
         })?;
     }
 
-    fs::hard_link(target, link_path).map_err(|e| {
-        FileIoError::WriteError(format!("Failed to create hard link {} to {}: {}", link_path, target, e))
+    fs::hard_link(&expanded_target, &expanded_link).map_err(|e| {
+        FileIoError::WriteError(format!("Failed to create hard link {} to {}: {}", expanded_link, expanded_target, e))
     })?;
 
     Ok(())
@@ -34,14 +40,17 @@ pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
 
 /// Create a symbolic link
 pub fn symlink(target: &str, link_path: &str) -> Result<()> {
+    let expanded_link = shellexpand::full(link_path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", link_path, e))))
+        .map(|expanded| expanded.into_owned())?;
 
     // Create parent directories if needed
-    let link_path_obj = Path::new(link_path);
+    let link_path_obj = Path::new(&expanded_link);
     if let Some(parent) = link_path_obj.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to create parent directories for {}: {}",
-                link_path, e
+                expanded_link, e
             ))
         })?;
     }
@@ -49,10 +58,10 @@ pub fn symlink(target: &str, link_path: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
-        symlink(target, link_path).map_err(|e| {
+        symlink(target, &expanded_link).map_err(|e| {
             FileIoError::WriteError(format!(
                 "Failed to create symbolic link {} to {}: {}",
-                link_path, target, e
+                expanded_link, target, e
             ))
         })?;
     }

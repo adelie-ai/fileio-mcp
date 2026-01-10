@@ -9,18 +9,21 @@ use std::path::Path;
 
 /// Count lines in a file
 pub fn count_lines(path: &str) -> Result<u64> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
     if !path_obj.is_file() {
-        return Err(FileIoError::InvalidPath(format!("{} is not a file", path)).into());
+        return Err(FileIoError::InvalidPath(format!("{} is not a file", expanded_path)).into());
     }
 
-    let file = File::open(path)
-        .map_err(|e| FileIoError::ReadError(format!("Failed to open file {}: {}", path, e)))?;
+    let file = File::open(&expanded_path)
+        .map_err(|e| FileIoError::ReadError(format!("Failed to open file {}: {}", expanded_path, e)))?;
 
     let reader = BufReader::new(file);
     let line_count = reader.lines().count() as u64;

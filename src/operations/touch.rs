@@ -10,14 +10,17 @@ use std::time::SystemTime;
 
 /// Touch a file (create if it doesn't exist, update timestamp if it does)
 pub fn touch(path: &str) -> Result<()> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if path_obj.exists() {
         // Update timestamp using filetime crate
         let now = SystemTime::now();
         let file_time = FileTime::from_system_time(now);
-        set_file_times(path, file_time, file_time).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to update timestamp for {}: {}", path, e))
+        set_file_times(&expanded_path, file_time, file_time).map_err(|e| {
+            FileIoError::WriteError(format!("Failed to update timestamp for {}: {}", expanded_path, e))
         })?;
     } else {
         // Create empty file
@@ -26,12 +29,12 @@ pub fn touch(path: &str) -> Result<()> {
             fs::create_dir_all(parent).map_err(|e| {
                 FileIoError::WriteError(format!(
                     "Failed to create parent directories for {}: {}",
-                    path, e
+                    expanded_path, e
                 ))
             })?;
         }
-        fs::File::create(path).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to create file {}: {}", path, e))
+        fs::File::create(&expanded_path).map_err(|e| {
+            FileIoError::WriteError(format!("Failed to create file {}: {}", expanded_path, e))
         })?;
     }
 

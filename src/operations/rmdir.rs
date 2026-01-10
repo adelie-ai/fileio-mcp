@@ -8,17 +8,20 @@ use std::path::Path;
 
 /// Remove a directory (wrapper around rm with recursive flag)
 pub fn rmdir(path: &str, recursive: bool) -> Result<()> {
-    let path_obj = Path::new(path);
+    let expanded_path = shellexpand::full(path)
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map(|expanded| expanded.into_owned())?;
+    let path_obj = Path::new(&expanded_path);
 
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(path.to_string()).into());
+        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
     }
 
     if !path_obj.is_dir() {
-        return Err(FileIoError::InvalidPath(format!("{} is not a directory", path)).into());
+        return Err(FileIoError::InvalidPath(format!("{} is not a directory", expanded_path)).into());
     }
 
-    rm::rm(path, recursive, false)
+    rm::rm(&expanded_path, recursive, false)
 }
 
 #[cfg(test)]
