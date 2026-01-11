@@ -52,44 +52,53 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     Ok(matches)
 }
 
-/// Copy a file or directory (supports glob patterns)
-pub fn cp(source: &str, destination: &str, recursive: bool) -> Result<()> {
+/// Copy files or directories (supports glob patterns and arrays of paths)
+pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<()> {
     let expanded_dest = shellexpand::full(destination)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", destination, e))))
         .map(|expanded| expanded.into_owned())?;
     let dest_path = Path::new(&expanded_dest);
     let dest_is_dir = dest_path.exists() && dest_path.is_dir();
 
-    // Check if source contains glob patterns
-    if is_glob_pattern(source) {
-        // Expand glob and copy each match
-        let matches = expand_glob(source)?;
-        
-        if matches.is_empty() {
-            return Err(FileIoError::NotFound(format!("No files match pattern: {}", source)).into());
+    let mut all_sources = Vec::new();
+    
+    for source in sources {
+        // Check if source contains glob patterns
+        if is_glob_pattern(source) {
+            // Expand glob and add matches
+            let matches = expand_glob(source)?;
+            
+            if matches.is_empty() {
+                return Err(FileIoError::NotFound(format!("No files match pattern: {}", source)).into());
+            }
+
+            for match_path in matches {
+                all_sources.push(match_path.to_str().unwrap().to_string());
+            }
+        } else {
+            // Single path
+            all_sources.push(source.to_string());
         }
-
-        if !dest_is_dir && matches.len() > 1 {
-            return Err(FileIoError::InvalidPath(
-                format!("Multiple files match pattern '{}' but destination '{}' is not a directory", source, destination)
-            ).into());
-        }
-
-        for match_path in matches {
-            let dest = if dest_is_dir {
-                dest_path.join(match_path.file_name().unwrap())
-            } else {
-                dest_path.to_path_buf()
-            };
-
-            cp_single(match_path.to_str().unwrap(), dest.to_str().unwrap(), recursive)?;
-        }
-
-        Ok(())
-    } else {
-        // Single path
-        cp_single(source, destination, recursive)
     }
+
+    if all_sources.len() > 1 && !dest_is_dir {
+        return Err(FileIoError::InvalidPath(
+            format!("Multiple sources provided but destination '{}' is not a directory", destination)
+        ).into());
+    }
+
+    for source_path in &all_sources {
+        let dest = if dest_is_dir {
+            let source_path_obj = Path::new(source_path);
+            dest_path.join(source_path_obj.file_name().unwrap())
+        } else {
+            dest_path.to_path_buf()
+        };
+
+        cp_single(source_path, dest.to_str().unwrap(), recursive)?;
+    }
+
+    Ok(())
 }
 
 /// Copy a single file or directory
@@ -185,7 +194,7 @@ mod tests {
         let dst = dir.path().join("dest.txt");
 
         fs::write(&src, "content").unwrap();
-        cp(src.to_str().unwrap(), dst.to_str().unwrap(), false).unwrap();
+        cp(&[src.to_str().unwrap()], dst.to_str().unwrap(), false).unwrap();
 
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "content");
@@ -200,7 +209,7 @@ mod tests {
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(src_dir.join("file.txt"), "content").unwrap();
 
-        cp(src_dir.to_str().unwrap(), dst_dir.to_str().unwrap(), true).unwrap();
+        cp(&[src_dir.to_str().unwrap()], dst_dir.to_str().unwrap(), true).unwrap();
 
         assert!(dst_dir.exists());
         assert!(dst_dir.join("file.txt").exists());
@@ -218,7 +227,7 @@ mod tests {
         fs::create_dir_all(&dst_dir).unwrap();
 
         let pattern = base.join("*.txt").to_str().unwrap().to_string();
-        cp(&pattern, dst_dir.to_str().unwrap(), false).unwrap();
+        cp(&[&pattern], dst_dir.to_str().unwrap(), false).unwrap();
 
         assert!(dst_dir.join("file1.txt").exists());
         assert!(dst_dir.join("file2.txt").exists());

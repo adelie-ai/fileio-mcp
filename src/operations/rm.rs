@@ -52,40 +52,48 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     Ok(matches)
 }
 
-/// Remove a file or directory (supports glob patterns)
-pub fn rm(path: &str, recursive: bool, force: bool) -> Result<()> {
-    // Check if path contains glob patterns
-    if is_glob_pattern(path) {
-        // Expand glob and remove each match
-        let matches = expand_glob(path)?;
-        
-        if matches.is_empty() {
-            if force {
-                return Ok(());
+/// Remove files or directories (supports glob patterns and arrays of paths)
+pub fn rm(paths: &[&str], recursive: bool, force: bool) -> Result<()> {
+    let mut all_paths = Vec::new();
+    
+    for path in paths {
+        // Check if path contains glob patterns
+        if is_glob_pattern(path) {
+            // Expand glob and add matches
+            let matches = expand_glob(path)?;
+            
+            if matches.is_empty() {
+                if !force {
+                    return Err(FileIoError::NotFound(format!("No files match pattern: {}", path)).into());
+                }
+            } else {
+                for match_path in matches {
+                    all_paths.push(match_path.to_str().unwrap().to_string());
+                }
             }
-            return Err(FileIoError::NotFound(format!("No files match pattern: {}", path)).into());
+        } else {
+            // Single path
+            all_paths.push(path.to_string());
         }
-
-        let mut errors = Vec::new();
-        for match_path in matches {
-            if let Err(e) = rm_single(match_path.to_str().unwrap(), recursive, force) {
-                errors.push(format!("{}: {}", match_path.display(), e));
-            }
-        }
-
-        if !errors.is_empty() {
-            return Err(FileIoError::WriteError(format!(
-                "Some removals failed: {}",
-                errors.join("; ")
-            ))
-            .into());
-        }
-
-        Ok(())
-    } else {
-        // Single path
-        rm_single(path, recursive, force)
     }
+    
+    // Remove all collected paths
+    let mut errors = Vec::new();
+    for path in &all_paths {
+        if let Err(e) = rm_single(path, recursive, force) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(FileIoError::WriteError(format!(
+            "Some removals failed: {}",
+            errors.join("; ")
+        ))
+        .into());
+    }
+
+    Ok(())
 }
 
 /// Remove a single file or directory
@@ -154,7 +162,7 @@ mod tests {
         let file = dir.path().join("file.txt");
         fs::write(&file, "content").unwrap();
 
-        rm(file.to_str().unwrap(), false, false).unwrap();
+        rm(&[file.to_str().unwrap()], false, false).unwrap();
         assert!(!file.exists());
     }
 
@@ -165,7 +173,7 @@ mod tests {
         fs::create_dir_all(&subdir).unwrap();
         fs::write(subdir.join("file.txt"), "content").unwrap();
 
-        rm(subdir.to_str().unwrap(), true, false).unwrap();
+        rm(&[subdir.to_str().unwrap()], true, false).unwrap();
         assert!(!subdir.exists());
     }
 
@@ -178,7 +186,7 @@ mod tests {
         fs::write(base.join("other.log"), "content3").unwrap();
 
         let pattern = base.join("*.txt").to_str().unwrap().to_string();
-        rm(&pattern, false, false).unwrap();
+        rm(&[&pattern], false, false).unwrap();
 
         assert!(!base.join("file1.txt").exists());
         assert!(!base.join("file2.txt").exists());

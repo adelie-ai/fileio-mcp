@@ -6,8 +6,32 @@ use crate::error::{FileIoError, Result};
 use std::fs;
 use std::path::Path;
 
-/// Count words in a file (whitespace-separated)
-pub fn count_words(path: &str) -> Result<u64> {
+/// Count words in files (whitespace-separated)
+/// Can accept a single path or multiple paths, returns a map of path -> word count
+pub fn count_words(paths: &[&str]) -> Result<std::collections::HashMap<String, u64>> {
+    let mut results = std::collections::HashMap::new();
+    let mut errors = Vec::new();
+    for path in paths {
+        match count_words_single(path) {
+            Ok(count) => {
+                results.insert(path.to_string(), count);
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", path, e));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
+            "Some word count operations failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(results)
+}
+
+/// Count words in a single file (whitespace-separated)
+pub fn count_words_single(path: &str) -> Result<u64> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -43,7 +67,8 @@ mod tests {
         writeln!(file, "foo bar").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let count = count_words(path).unwrap();
+        let counts = count_words(&[path]).unwrap();
+        let count = *counts.get(path).unwrap();
         assert_eq!(count, 4); // hello, world, foo, bar
     }
 
@@ -52,7 +77,8 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        let count = count_words(path).unwrap();
+        let counts = count_words(&[path]).unwrap();
+        let count = *counts.get(path).unwrap();
         assert_eq!(count, 0);
     }
 
@@ -62,7 +88,8 @@ mod tests {
         writeln!(file, "word1    word2   word3").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let count = count_words(path).unwrap();
+        let counts = count_words(&[path]).unwrap();
+        let count = *counts.get(path).unwrap();
         assert_eq!(count, 3);
     }
 }

@@ -7,9 +7,26 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 /// Set file mode (permissions)
-pub fn set_file_mode(path: &str, mode: &str) -> Result<()> {
-    // Parse mode string - support both octal and symbolic
+/// Can accept a single path or multiple paths
+pub fn set_file_mode(paths: &[&str], mode: &str) -> Result<()> {
     let mode_value = parse_mode(mode)?;
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(e) = set_file_mode_single(path, mode_value) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+            "Some permission changes failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(())
+}
+
+/// Set file mode (permissions) for a single path
+pub fn set_file_mode_single(path: &str, mode_value: u32) -> Result<()> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -72,7 +89,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        set_file_mode(path, "0644").unwrap();
+        set_file_mode(&[path], "0644").unwrap();
 
         let metadata = fs::metadata(path).unwrap();
         let permissions = metadata.permissions();
@@ -85,7 +102,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        set_file_mode(path, "755").unwrap();
+        set_file_mode(&[path], "755").unwrap();
 
         let metadata = fs::metadata(path).unwrap();
         let permissions = metadata.permissions();

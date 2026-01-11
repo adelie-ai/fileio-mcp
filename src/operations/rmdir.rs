@@ -6,8 +6,26 @@ use crate::error::{FileIoError, Result};
 use crate::operations::rm;
 use std::path::Path;
 
-/// Remove a directory (wrapper around rm with recursive flag)
-pub fn rmdir(path: &str, recursive: bool) -> Result<()> {
+/// Remove directories (wrapper around rm with recursive flag)
+/// Can accept a single path or multiple paths
+pub fn rmdir(paths: &[&str], recursive: bool) -> Result<()> {
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(e) = rmdir_single(path, recursive) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+            "Some directory removals failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(())
+}
+
+/// Remove a single directory (wrapper around rm with recursive flag)
+pub fn rmdir_single(path: &str, recursive: bool) -> Result<()> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -34,7 +52,7 @@ pub fn rmdir(path: &str, recursive: bool) -> Result<()> {
         }
     }
 
-    rm::rm(&expanded_path, recursive, false)
+    rm::rm(&[&expanded_path], recursive, false)
 }
 
 #[cfg(test)]
@@ -49,7 +67,7 @@ mod tests {
         let subdir = dir.path().join("subdir");
         fs::create_dir_all(&subdir).unwrap();
 
-        rmdir(subdir.to_str().unwrap(), false).unwrap();
+        rmdir(&[subdir.to_str().unwrap()], false).unwrap();
         assert!(!subdir.exists());
     }
 
@@ -60,7 +78,7 @@ mod tests {
         fs::create_dir_all(&subdir).unwrap();
         fs::write(subdir.join("file.txt"), "content").unwrap();
 
-        rmdir(subdir.to_str().unwrap(), true).unwrap();
+        rmdir(&[subdir.to_str().unwrap()], true).unwrap();
         assert!(!subdir.exists());
     }
 }

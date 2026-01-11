@@ -6,7 +6,25 @@ use crate::error::{FileIoError, Result};
 use std::path::Path;
 
 /// Change file or directory ownership
-pub fn chown(path: &str, user: Option<&str>, group: Option<&str>) -> Result<()> {
+/// Can accept a single path or multiple paths
+pub fn chown(paths: &[&str], user: Option<&str>, group: Option<&str>) -> Result<()> {
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(e) = chown_single(path, user, group) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+            "Some ownership changes failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(())
+}
+
+/// Change a single file or directory ownership
+pub fn chown_single(path: &str, user: Option<&str>, group: Option<&str>) -> Result<()> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::InvalidPath(format!("Failed to expand path '{}': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -97,6 +115,6 @@ mod tests {
         let gid = getgid();
 
         // Change ownership to current user (should succeed)
-        chown(path, Some(&uid.as_raw().to_string()), Some(&gid.as_raw().to_string())).unwrap();
+        chown(&[path], Some(&uid.as_raw().to_string()), Some(&gid.as_raw().to_string())).unwrap();
     }
 }

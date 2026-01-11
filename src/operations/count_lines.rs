@@ -7,8 +7,32 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-/// Count lines in a file
-pub fn count_lines(path: &str) -> Result<u64> {
+/// Count lines in files
+/// Can accept a single path or multiple paths, returns a map of path -> line count
+pub fn count_lines(paths: &[&str]) -> Result<std::collections::HashMap<String, u64>> {
+    let mut results = std::collections::HashMap::new();
+    let mut errors = Vec::new();
+    for path in paths {
+        match count_lines_single(path) {
+            Ok(count) => {
+                results.insert(path.to_string(), count);
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", path, e));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
+            "Some line count operations failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(results)
+}
+
+/// Count lines in a single file
+pub fn count_lines_single(path: &str) -> Result<u64> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -45,7 +69,8 @@ mod tests {
         writeln!(file, "line 3").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let count = count_lines(path).unwrap();
+        let counts = count_lines(&[path]).unwrap();
+        let count = *counts.get(path).unwrap();
         assert_eq!(count, 3);
     }
 
@@ -54,7 +79,8 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        let count = count_lines(path).unwrap();
+        let counts = count_lines(&[path]).unwrap();
+        let count = *counts.get(path).unwrap();
         assert_eq!(count, 0);
     }
 
@@ -64,7 +90,8 @@ mod tests {
         write!(file, "single line").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let count = count_lines(path).unwrap();
+        let counts = count_lines(&[path]).unwrap();
+        let count = *counts.get(path).unwrap();
         assert_eq!(count, 1);
     }
 }

@@ -22,7 +22,29 @@ pub struct FileStat {
 }
 
 /// Get file or directory statistics
-pub fn stat(path: &str) -> Result<FileStat> {
+/// Can accept a single path or multiple paths, returns a vector of FileStat
+pub fn stat(paths: &[&str]) -> Result<Vec<FileStat>> {
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    for path in paths {
+        match stat_single(path) {
+            Ok(stat_result) => results.push(stat_result),
+            Err(e) => {
+                errors.push(format!("{}: {}", path, e));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
+            "Some stat queries failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(results)
+}
+
+/// Get file or directory statistics for a single path
+pub fn stat_single(path: &str) -> Result<FileStat> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -145,7 +167,8 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        let stat_result = stat(path).unwrap();
+        let stat_results = stat(&[path]).unwrap();
+        let stat_result = &stat_results[0];
         assert!(stat_result.is_file);
         assert!(!stat_result.is_dir);
         assert_eq!(stat_result.entry_type, "file");
@@ -156,7 +179,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().to_str().unwrap();
 
-        let stat_result = stat(path).unwrap();
+        let stat_results = stat(&[path]).unwrap();
+        let stat_result = &stat_results[0];
         assert!(!stat_result.is_file);
         assert!(stat_result.is_dir);
         assert_eq!(stat_result.entry_type, "directory");
@@ -164,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_stat_not_found() {
-        let result = stat("/nonexistent/path/that/does/not/exist");
+        let result = stat(&["/nonexistent/path/that/does/not/exist"]);
         assert!(result.is_err());
     }
 }

@@ -8,7 +8,31 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 /// Get file mode (permissions) as octal string
-pub fn get_file_mode(path: &str) -> Result<String> {
+/// Can accept a single path or multiple paths, returns a map of path -> mode
+pub fn get_file_mode(paths: &[&str]) -> Result<std::collections::HashMap<String, String>> {
+    let mut results = std::collections::HashMap::new();
+    let mut errors = Vec::new();
+    for path in paths {
+        match get_file_mode_single(path) {
+            Ok(mode) => {
+                results.insert(path.to_string(), mode);
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", path, e));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
+            "Some permission queries failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(results)
+}
+
+/// Get file mode (permissions) as octal string for a single path
+pub fn get_file_mode_single(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -42,7 +66,8 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        let mode = get_file_mode(path).unwrap();
+        let modes = get_file_mode(&[path]).unwrap();
+        let mode = modes.get(path).unwrap();
         // Should be a valid octal string
         assert!(mode.len() == 4);
         assert!(mode.chars().all(|c| c.is_ascii_digit()));

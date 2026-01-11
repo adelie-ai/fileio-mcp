@@ -8,8 +8,26 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-/// Touch a file (create if it doesn't exist, update timestamp if it does)
-pub fn touch(path: &str) -> Result<()> {
+/// Touch files (create if they don't exist, update timestamp if they do)
+/// Can accept a single path or multiple paths
+pub fn touch(paths: &[&str]) -> Result<()> {
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(e) = touch_single(path) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+            "Some touch operations failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(())
+}
+
+/// Touch a single file (create if it doesn't exist, update timestamp if it does)
+pub fn touch_single(path: &str) -> Result<()> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -53,7 +71,7 @@ mod tests {
         let path = dir.path().join("newfile.txt");
         let path_str = path.to_str().unwrap().to_string();
 
-        touch(&path_str).unwrap();
+        touch(&[&path_str]).unwrap();
         assert!(path.exists());
         assert!(path.is_file());
     }
@@ -73,7 +91,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Touch the file
-        touch(&path_str).unwrap();
+        touch(&[&path_str]).unwrap();
 
         let metadata2 = fs::metadata(&path).unwrap();
         let modified2 = metadata2.modified().unwrap();
@@ -88,7 +106,7 @@ mod tests {
         let path = dir.path().join("subdir").join("file.txt");
         let path_str = path.to_str().unwrap().to_string();
 
-        touch(&path_str).unwrap();
+        touch(&[&path_str]).unwrap();
         assert!(path.exists());
     }
 }

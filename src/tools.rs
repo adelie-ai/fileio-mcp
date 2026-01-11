@@ -71,13 +71,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_set_permissions",
-                "description": "Set file or directory permissions (chmod equivalent). Use this to change file permissions on Unix-like systems. Accepts octal format strings like '755' (rwxr-xr-x), '0644' (rw-r--r--), etc. The mode string can include or omit the leading zero. Works on files and directories.",
+                "description": "Set file or directory permissions (chmod equivalent). Use this to change file permissions on Unix-like systems. Accepts octal format strings like '755' (rwxr-xr-x), '0644' (rw-r--r--), etc. The mode string can include or omit the leading zero. Works on files and directories. Can accept a single path string or an array of paths to set permissions on multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file or directory whose permissions to change. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to modify a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files or directories whose permissions to change. All paths will have the same mode applied. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "mode": {
                             "type": "string",
@@ -89,13 +92,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_set_mode",
-                "description": "Set file or directory permissions (chmod equivalent). This is an alias for fileio_set_permissions with the same functionality. Accepts octal format strings like '755', '0644', etc. Use whichever name is more convenient.",
+                "description": "Set file or directory permissions (chmod equivalent). This is an alias for fileio_set_permissions with the same functionality. Accepts octal format strings like '755', '0644', etc. Use whichever name is more convenient. Accepts an array of paths to set permissions on multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file or directory whose permissions to change. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to modify a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files or directories whose permissions to change. All paths will have the same mode applied. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "mode": {
                             "type": "string",
@@ -107,13 +113,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_get_permissions",
-                "description": "Get file or directory permissions (mode) as an octal string. Returns the current permissions in octal format (e.g., '0755', '0644'). Useful for checking current permissions before modifying them or for auditing purposes.",
+                "description": "Get file or directory permissions (mode) as an octal string. Returns the current permissions in octal format (e.g., '0755', '0644'). Useful for checking current permissions before modifying them or for auditing purposes. Can accept a single path string or an array of paths to get permissions for multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file or directory to query. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to query a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files or directories to query. Returns permissions for all paths. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["path"]
@@ -121,13 +130,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_touch",
-                "description": "Touch a file - creates it if it doesn't exist, or updates its access and modification timestamps to the current time if it does exist. Automatically creates parent directories if needed. Equivalent to the Unix 'touch' command. Useful for creating empty files or updating timestamps for build systems.",
+                "description": "Touch files - creates them if they don't exist, or updates their access and modification timestamps to the current time if they do exist. Automatically creates parent directories if needed. Equivalent to the Unix 'touch' command. Useful for creating empty files or updating timestamps for build systems. Accepts an array of paths to touch multiple files.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file to touch. Parent directories will be created if they don't exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to touch a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files to touch. All files will be created or have their timestamps updated. Parent directories will be created if they don't exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["path"]
@@ -135,13 +147,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_stat",
-                "description": "Get comprehensive file or directory statistics. Returns detailed metadata including: size in bytes, file type (file/directory/symlink), permissions (mode) as octal string, timestamps (modified, accessed, created as Unix epoch seconds), and boolean flags (is_file, is_dir, is_symlink). Returns JSON with all available information about the file system entry.",
+                "description": "Get comprehensive file or directory statistics. Returns detailed metadata including: size in bytes, file type (file/directory/symlink), permissions (mode) as octal string, timestamps (modified, accessed, created as Unix epoch seconds), and boolean flags (is_file, is_dir, is_symlink). Returns JSON with all available information about the file system entry. Can accept a single path string or an array of paths to get statistics for multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file or directory to query. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to query a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files or directories to query. Returns statistics for all paths. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["path"]
@@ -149,13 +164,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_make_directory",
-                "description": "Create a directory. By default, creates parent directories recursively (equivalent to 'mkdir -p'). If recursive is false, will fail if parent directories don't exist. If the directory already exists, the operation succeeds (idempotent).",
+                "description": "Create directories. By default, creates parent directories recursively (equivalent to 'mkdir -p'). If recursive is false, will fail if parent directories don't exist. If the directory already exists, the operation succeeds (idempotent). Accepts an array of paths to create multiple directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the directory to create. Can be a nested path like '/a/b/c'. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to create a specific directory, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to directories to create. All directories will be created with the same recursive setting. Can be nested paths like '/a/b/c'. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -293,17 +311,20 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_copy",
-                "description": "Copy files or directories (cp equivalent). Copies the source to the destination. Supports glob patterns in source (e.g., '*.txt', 'file?.log'). When using globs, multiple files can be copied to a destination directory. For files, creates a copy at the destination. For directories, requires recursive=true to copy the entire directory tree. If destination is a directory, the source will be copied into it. If destination is a file path, it will be overwritten (only works with single source). Creates parent directories of destination if needed.",
+                "description": "Copy files or directories (cp equivalent). Copies the sources to the destination. Supports glob patterns in the source array (e.g., '*.txt', 'file?.log'). When using multiple sources, destination must be a directory. For files, creates a copy at the destination. For directories, requires recursive=true to copy the entire directory tree. If destination is a directory, the sources will be copied into it. If destination is a file path, it will be overwritten (only works with single source). Creates parent directories of destination if needed.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "source": {
-                            "type": "string",
-                            "description": "Source file or directory path to copy, or glob pattern (e.g., '*.txt', 'file?.log', 'dir/*.rs'). Must exist or match existing files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to copy a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of source paths to copy. Can include glob patterns (e.g., '*.txt', 'file?.log', 'dir/*.rs'). All sources will be copied to the destination (which must be a directory when using multiple sources). Must exist or match existing files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "destination": {
                             "type": "string",
-                            "description": "Destination path. For glob patterns: must be a directory. For single files: can be a file path or directory (source name preserved). For directories: must be a directory path or new directory name. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
+                            "description": "Destination path. For glob patterns or arrays: must be a directory. For single files: can be a file path or directory (source name preserved). For directories: must be a directory path or new directory name. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -315,17 +336,20 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_move",
-                "description": "Move or rename files or directories (mv equivalent). Moves the source to the destination location. Supports glob patterns in source (e.g., '*.txt', 'file?.log'). When using globs, multiple files can be moved to a destination directory. Can be used to rename (same directory, different name) or move (different location). Creates parent directories of destination if needed. The source will no longer exist at its original location after a successful move.",
+                "description": "Move or rename files or directories (mv equivalent). Moves the sources to the destination location. Supports glob patterns in the source array (e.g., '*.txt', 'file?.log'). When using multiple sources, destination must be a directory. Can be used to rename (same directory, different name) or move (different location). Creates parent directories of destination if needed. The sources will no longer exist at their original locations after a successful move.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "source": {
-                            "type": "string",
-                            "description": "Source file or directory path to move, or glob pattern (e.g., '*.txt', 'file?.log', 'dir/*.rs'). Must exist or match existing files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to move a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of source paths to move. Can include glob patterns (e.g., '*.txt', 'file?.log', 'dir/*.rs'). All sources will be moved to the destination (which must be a directory when using multiple sources). Must exist or match existing files. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "destination": {
                             "type": "string",
-                            "description": "Destination path. For glob patterns: must be a directory. For single files: can be a file path (rename) or directory path (move into directory). Parent directories will be created if needed. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
+                            "description": "Destination path. For glob patterns or arrays: must be a directory. For single files: can be a file path (rename) or directory path (move into directory). Parent directories will be created if needed. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["source", "destination"]
@@ -333,13 +357,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_remove",
-                "description": "Remove files or directories (rm equivalent). Permanently deletes the specified path. Supports glob patterns (e.g., '*.tmp', 'file?.log', 'dir/*.bak') to remove multiple files matching the pattern. For directories, recursive=true is required to remove non-empty directories. Use force=true to suppress errors if the file doesn't exist (idempotent removal). Warning: This operation cannot be undone.",
+                "description": "Remove files or directories (rm equivalent). Permanently deletes the specified path. Supports glob patterns (e.g., '*.tmp', 'file?.log', 'dir/*.bak') to remove multiple files matching the pattern, or an array of paths. For directories, recursive=true is required to remove non-empty directories. Use force=true to suppress errors if the file doesn't exist (idempotent removal). Warning: This operation cannot be undone.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to file or directory to remove, or glob pattern (e.g., '*.tmp', 'file?.log', 'dir/*.bak'). Must exist or match existing files unless force=true. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to remove a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files or directories to remove. Can include glob patterns (e.g., '*.tmp', 'file?.log', 'dir/*.bak'). All paths will be removed with the same recursive and force settings. Must exist or match existing files unless force=true. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -355,13 +382,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_remove_directory",
-                "description": "Remove a directory (rmdir equivalent). Specifically for removing directories. Requires recursive=true for non-empty directories. Will fail if the path is not a directory. Use this when you want to ensure you're only removing directories, not files.",
+                "description": "Remove directories (rmdir equivalent). Specifically for removing directories. Requires recursive=true for non-empty directories. Will fail if any path is not a directory. Use this when you want to ensure you're only removing directories, not files. Accepts an array of paths to remove multiple directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to directory to remove. Must exist and be a directory. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to remove a specific directory, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to directories to remove. All directories will be removed with the same recursive setting. Must exist and be directories. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -484,13 +514,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_change_ownership",
-                "description": "Change file or directory ownership (chown equivalent). Changes the owner and/or group of a file or directory. Currently supports numeric UID/GID only (username/groupname resolution not implemented). At least one of user or group must be provided. Requires appropriate permissions (typically root or file owner). Works on Unix-like systems only.",
+                "description": "Change file or directory ownership (chown equivalent). Changes the owner and/or group of a file or directory. Currently supports numeric UID/GID only (username/groupname resolution not implemented). At least one of user or group must be provided. Requires appropriate permissions (typically root or file owner). Works on Unix-like systems only. Can accept a single path string or an array of paths to change ownership of multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to file or directory whose ownership to change. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to change ownership of a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files or directories whose ownership to change. All paths will have the same ownership applied. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
                         "user": {
                             "type": "string",
@@ -528,13 +561,24 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_count_lines",
-                "description": "Count the number of lines in a file. Returns the total line count (newline-separated). Useful for getting line counts in code files, logs, or any text file. A file with no newlines counts as 1 line.",
+                "description": "Count the number of lines in files. Returns the total line count (newline-separated) for each file. Useful for getting line counts in code files, logs, or any text file. A file with no newlines counts as 1 line. Accepts an array of paths to count lines in multiple files.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file to count lines in. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to count lines in a specific file, use an absolute path or verify the working directory first."
+                            "oneOf": [
+                                {
+                                    "type": "string",
+                                    "description": "Path to the file to count lines in. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to count lines in a specific file, use an absolute path or verify the working directory first."
+                                },
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "Array of paths to files to count lines in. Returns line counts for all files."
+                                }
+                            ]
                         }
                     },
                     "required": ["path"]
@@ -542,19 +586,43 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_count_words",
-                "description": "Count the number of words in a file. Returns the total word count (whitespace-separated). Useful for text analysis, document statistics, or content metrics. Words are separated by any whitespace (spaces, tabs, newlines).",
+                "description": "Count the number of words in files. Returns the total word count (whitespace-separated) for each file. Useful for text analysis, document statistics, or content metrics. Words are separated by any whitespace (spaces, tabs, newlines). Accepts an array of paths to count words in multiple files.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "type": "string",
-                            "description": "Path to the file to count words in. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to count words in a specific file, use an absolute path or verify the working directory first."
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files to count words in. Returns word counts for all files. Must exist and be files (not directories). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         }
                     },
                     "required": ["path"]
                 }
             }
         ])
+    }
+
+    /// Helper to parse path parameter (array of strings)
+    fn parse_paths(value: &Value) -> Result<Vec<String>> {
+        let arr = value.as_array().ok_or_else(|| {
+            crate::error::McpError::InvalidToolParameters(
+                "Path must be an array of strings".to_string(),
+            )
+        })?;
+        let mut paths = Vec::new();
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                paths.push(s.to_string());
+            } else {
+                return Err(crate::error::McpError::InvalidToolParameters(
+                    "Path array must contain only strings".to_string(),
+                )
+                .into());
+            }
+        }
+        Ok(paths)
     }
 
     /// Execute a tool by name
@@ -625,14 +693,12 @@ impl ToolRegistry {
                 }))
             }
             "fileio_set_permissions" | "fileio_set_mode" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
                 let mode = args
                     .get("mode")
                     .and_then(|v| v.as_str())
@@ -642,7 +708,8 @@ impl ToolRegistry {
                         )
                     })?;
 
-                crate::operations::file_mode::set_file_mode(path, mode)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+                crate::operations::file_mode::set_file_mode(&path_refs, mode)?;
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -652,56 +719,55 @@ impl ToolRegistry {
                 }))
             }
             "fileio_get_permissions" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let mode = crate::operations::get_mode::get_file_mode(path)?;
+                let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
+                let modes_json = serde_json::to_string(&modes)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": mode
+                        "text": modes_json
                     }]
                 }))
             }
             "fileio_touch" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                crate::operations::touch::touch(path)?;
+                crate::operations::touch::touch(&path_refs)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "File touched successfully"
+                        "text": "File(s) touched successfully"
                     }]
                 }))
             }
             "fileio_stat" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let stat_result = crate::operations::stat::stat(path)?;
-                let stat_json: Value = stat_result.into();
-                let stat_text = serde_json::to_string(&stat_json)
+                let stat_results = crate::operations::stat::stat(&path_refs)?;
+                let stat_json_array: Vec<Value> = stat_results.into_iter().map(|s| s.into()).collect();
+                let stat_text = serde_json::to_string(&stat_json_array)
                     .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
@@ -712,22 +778,21 @@ impl ToolRegistry {
                 }))
             }
             "fileio_make_directory" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(true);
 
-                crate::operations::mkdir::mkdir(path, recursive)?;
+                crate::operations::mkdir::mkdir(&path_refs, recursive)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "Directory created successfully"
+                        "text": "Directory(ies) created successfully"
                     }]
                 }))
             }
@@ -863,14 +928,13 @@ impl ToolRegistry {
                 }))
             }
             "fileio_copy" => {
-                let source = args
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: source".to_string(),
-                        )
-                    })?;
+                let source_value = args.get("source").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: source".to_string(),
+                    )
+                })?;
+                let sources = Self::parse_paths(source_value)?;
+                let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
                 let destination = args
                     .get("destination")
                     .and_then(|v| v.as_str())
@@ -881,24 +945,23 @@ impl ToolRegistry {
                     })?;
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                crate::operations::cp::cp(source, destination, recursive)?;
+                crate::operations::cp::cp(&source_refs, destination, recursive)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "File or directory copied successfully"
+                        "text": "File(s) or directory(ies) copied successfully"
                     }]
                 }))
             }
             "fileio_move" => {
-                let source = args
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: source".to_string(),
-                        )
-                    })?;
+                let source_value = args.get("source").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: source".to_string(),
+                    )
+                })?;
+                let sources = Self::parse_paths(source_value)?;
+                let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
                 let destination = args
                     .get("destination")
                     .and_then(|v| v.as_str())
@@ -908,53 +971,51 @@ impl ToolRegistry {
                         )
                     })?;
 
-                crate::operations::mv::mv(source, destination)?;
+                crate::operations::mv::mv(&source_refs, destination)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "File or directory moved successfully"
+                        "text": "File(s) or directory(ies) moved successfully"
                     }]
                 }))
             }
             "fileio_remove" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
                 let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                crate::operations::rm::rm(path, recursive, force)?;
+                crate::operations::rm::rm(&path_refs, recursive, force)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "File or directory removed successfully"
+                        "text": "File(s) or directory(ies) removed successfully"
                     }]
                 }))
             }
             "fileio_remove_directory" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                crate::operations::rmdir::rmdir(path, recursive)?;
+                crate::operations::rmdir::rmdir(&path_refs, recursive)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "Directory removed successfully"
+                        "text": "Directory(ies) removed successfully"
                     }]
                 }))
             }
@@ -1118,18 +1179,17 @@ impl ToolRegistry {
                 }))
             }
             "fileio_change_ownership" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let user = args.get("user").and_then(|v| v.as_str());
                 let group = args.get("group").and_then(|v| v.as_str());
 
-                crate::operations::chown::chown(path, user, group)?;
+                crate::operations::chown::chown(&path_refs, user, group)?;
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1168,40 +1228,42 @@ impl ToolRegistry {
                 }))
             }
             "fileio_count_lines" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let count = crate::operations::count_lines::count_lines(path)?;
+                let counts = crate::operations::count_lines::count_lines(&path_refs)?;
+                let counts_json = serde_json::to_string(&counts)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": count.to_string()
+                        "text": counts_json
                     }]
                 }))
             }
             "fileio_count_words" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path_value = args.get("path").ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let paths = Self::parse_paths(path_value)?;
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let count = crate::operations::count_words::count_words(path)?;
+                let counts = crate::operations::count_words::count_words(&path_refs)?;
+                let counts_json = serde_json::to_string(&counts)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": count.to_string()
+                        "text": counts_json
                     }]
                 }))
             }

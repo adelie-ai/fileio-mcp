@@ -5,8 +5,26 @@
 use crate::error::{FileIoError, Result};
 use std::fs;
 
-/// Create a directory (with -p equivalent, i.e., create parent directories)
-pub fn mkdir(path: &str, recursive: bool) -> Result<()> {
+/// Create directories (with -p equivalent, i.e., create parent directories)
+/// Can accept a single path or multiple paths
+pub fn mkdir(paths: &[&str], recursive: bool) -> Result<()> {
+    let mut errors = Vec::new();
+    for path in paths {
+        if let Err(e) = mkdir_single(path, recursive) {
+            errors.push(format!("{}: {}", path, e));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
+            "Some directory creations failed: {}",
+            errors.join("; ")
+        ))));
+    }
+    Ok(())
+}
+
+/// Create a single directory (with -p equivalent, i.e., create parent directories)
+pub fn mkdir_single(path: &str, recursive: bool) -> Result<()> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -42,7 +60,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("newdir").to_str().unwrap().to_string();
 
-        mkdir(&path, false).unwrap();
+        mkdir(&[&path], false).unwrap();
         assert!(std::path::Path::new(&path).exists());
     }
 
@@ -52,7 +70,7 @@ mod tests {
         let path = dir.path().join("a").join("b").join("c");
         let path_str = path.to_str().unwrap().to_string();
 
-        mkdir(&path_str, true).unwrap();
+        mkdir(&[&path_str], true).unwrap();
         assert!(path.exists());
     }
 
@@ -61,9 +79,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("existing").to_str().unwrap().to_string();
 
-        mkdir(&path, true).unwrap();
+        mkdir(&[&path], true).unwrap();
         // Should succeed even if directory already exists
-        mkdir(&path, true).unwrap();
+        mkdir(&[&path], true).unwrap();
         assert!(std::path::Path::new(&path).exists());
     }
 }

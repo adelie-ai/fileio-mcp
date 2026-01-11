@@ -52,44 +52,53 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     Ok(matches)
 }
 
-/// Move or rename a file or directory (supports glob patterns)
-pub fn mv(source: &str, destination: &str) -> Result<()> {
+/// Move or rename files or directories (supports glob patterns and arrays of paths)
+pub fn mv(sources: &[&str], destination: &str) -> Result<()> {
     let expanded_dest = shellexpand::full(destination)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", destination, e))))
         .map(|expanded| expanded.into_owned())?;
     let dest_path = Path::new(&expanded_dest);
     let dest_is_dir = dest_path.exists() && dest_path.is_dir();
 
-    // Check if source contains glob patterns
-    if is_glob_pattern(source) {
-        // Expand glob and move each match
-        let matches = expand_glob(source)?;
-        
-        if matches.is_empty() {
-            return Err(FileIoError::NotFound(format!("No files match pattern: {}", source)).into());
+    let mut all_sources = Vec::new();
+    
+    for source in sources {
+        // Check if source contains glob patterns
+        if is_glob_pattern(source) {
+            // Expand glob and add matches
+            let matches = expand_glob(source)?;
+            
+            if matches.is_empty() {
+                return Err(FileIoError::NotFound(format!("No files match pattern: {}", source)).into());
+            }
+
+            for match_path in matches {
+                all_sources.push(match_path.to_str().unwrap().to_string());
+            }
+        } else {
+            // Single path
+            all_sources.push(source.to_string());
         }
-
-        if !dest_is_dir && matches.len() > 1 {
-            return Err(FileIoError::InvalidPath(
-                format!("Multiple files match pattern '{}' but destination '{}' is not a directory", source, destination)
-            ).into());
-        }
-
-        for match_path in matches {
-            let dest = if dest_is_dir {
-                dest_path.join(match_path.file_name().unwrap())
-            } else {
-                dest_path.to_path_buf()
-            };
-
-            mv_single(match_path.to_str().unwrap(), dest.to_str().unwrap())?;
-        }
-
-        Ok(())
-    } else {
-        // Single path
-        mv_single(source, destination)
     }
+
+    if all_sources.len() > 1 && !dest_is_dir {
+        return Err(FileIoError::InvalidPath(
+            format!("Multiple sources provided but destination '{}' is not a directory", destination)
+        ).into());
+    }
+
+    for source_path in &all_sources {
+        let dest = if dest_is_dir {
+            let source_path_obj = Path::new(source_path);
+            dest_path.join(source_path_obj.file_name().unwrap())
+        } else {
+            dest_path.to_path_buf()
+        };
+
+        mv_single(source_path, dest.to_str().unwrap())?;
+    }
+
+    Ok(())
 }
 
 /// Move a single file or directory
@@ -143,7 +152,7 @@ mod tests {
         let dst = dir.path().join("dest.txt");
 
         fs::write(&src, "content").unwrap();
-        mv(src.to_str().unwrap(), dst.to_str().unwrap()).unwrap();
+        mv(&[src.to_str().unwrap()], dst.to_str().unwrap()).unwrap();
 
         assert!(!src.exists());
         assert!(dst.exists());
@@ -162,7 +171,7 @@ mod tests {
         fs::create_dir_all(&dst_dir).unwrap();
 
         let pattern = base.join("*.txt").to_str().unwrap().to_string();
-        mv(&pattern, dst_dir.to_str().unwrap()).unwrap();
+        mv(&[&pattern], dst_dir.to_str().unwrap()).unwrap();
 
         assert!(!base.join("file1.txt").exists());
         assert!(!base.join("file2.txt").exists());
