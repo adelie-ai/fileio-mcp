@@ -611,6 +611,25 @@ impl ToolRegistry {
         Ok(paths)
     }
 
+    fn parse_optional_u64(args: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u64>> {
+        match args.get(key) {
+            None => Ok(None),
+            Some(v) => {
+                if v.is_null() {
+                    return Ok(None);
+                }
+                if let Some(n) = v.as_u64() {
+                    return Ok(Some(n));
+                }
+                Err(crate::error::McpError::InvalidToolParameters(format!(
+                    "{} must be a non-negative integer",
+                    key
+                ))
+                .into())
+            }
+        }
+    }
+
     /// Execute a tool by name
     pub async fn execute_tool(
         &self,
@@ -631,10 +650,10 @@ impl ToolRegistry {
                             "Missing required parameter: path".to_string(),
                         )
                     })?;
-                let start_line = args.get("start_line").and_then(|v| v.as_u64());
-                let end_line = args.get("end_line").and_then(|v| v.as_u64());
-                let line_count = args.get("line_count").and_then(|v| v.as_u64());
-                let start_offset = args.get("start_offset").and_then(|v| v.as_u64());
+                let start_line = Self::parse_optional_u64(args, "start_line")?;
+                let end_line = Self::parse_optional_u64(args, "end_line")?;
+                let line_count = Self::parse_optional_u64(args, "line_count")?;
+                let start_offset = Self::parse_optional_u64(args, "start_offset")?;
 
                 let lines = crate::operations::read_lines::read_lines(
                     path, start_line, end_line, line_count, start_offset,
@@ -1233,6 +1252,28 @@ impl ToolRegistry {
             }
             _ => Err(crate::error::McpError::ToolNotFound(name.to_string()).into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_read_lines_rejects_negative_start_line() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let registry = ToolRegistry::new();
+        let args = serde_json::json!({"path": path, "start_line": -1});
+        let res = registry.execute_tool("fileio_read_lines", &args).await;
+        assert!(res.is_err());
+        let msg = format!("{}", res.err().unwrap());
+        assert!(msg.to_lowercase().contains("start_line"));
+        assert!(msg.to_lowercase().contains("non-negative"));
     }
 }
 

@@ -268,6 +268,59 @@ def test_fileio_read_lines_start_offset(client: McpStdioClient) -> None:
     _assert(val == ["l2", "l3"], f"Unexpected start_offset read: {val}")
 
 
+def test_fileio_read_lines_empty_file_returns_empty(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_read_lines_empty")
+    path = case / "empty.txt"
+    path.write_text("")
+    res = client.tool_call("fileio_read_lines", {"path": str(path)})
+    val = _extract_value(res)
+    _assert(val == [], f"Expected empty list, got: {val}")
+
+
+def test_fileio_read_lines_end_past_eof_clamps(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_read_lines_end_past_eof")
+    path = case / "in.txt"
+    path.write_text("a\nb\nc\n")
+
+    res = client.tool_call("fileio_read_lines", {"path": str(path), "start_line": 2, "end_line": 999})
+    val = _extract_value(res)
+    _assert(val == ["b", "c"], f"Unexpected clamp-to-EOF behavior: {val}")
+
+    res = client.tool_call("fileio_read_lines", {"path": str(path), "start_line": 2, "line_count": 999})
+    val = _extract_value(res)
+    _assert(val == ["b", "c"], f"Unexpected clamp-to-EOF behavior (count): {val}")
+
+
+def test_fileio_read_lines_start_line_beyond_eof_errors(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_read_lines_start_beyond_eof")
+    path = case / "in.txt"
+    path.write_text("a\nb\n")
+    _assert_raises(
+        "exceeds file length",
+        lambda: client.tool_call("fileio_read_lines", {"path": str(path), "start_line": 5}),
+    )
+
+
+def test_fileio_read_lines_end_before_start_errors(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_read_lines_end_before_start")
+    path = case / "in.txt"
+    path.write_text("a\nb\n")
+    _assert_raises(
+        "end_line",
+        lambda: client.tool_call("fileio_read_lines", {"path": str(path), "start_line": 2, "end_line": 1}),
+    )
+
+
+def test_fileio_read_lines_negative_numbers_rejected(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_read_lines_negative_numbers")
+    path = case / "in.txt"
+    path.write_text("a\n")
+    _assert_raises(
+        "non-negative",
+        lambda: client.tool_call("fileio_read_lines", {"path": str(path), "start_line": -1}),
+    )
+
+
 def test_fileio_read_lines_missing_errors(client: McpStdioClient) -> None:
     case = _new_case_dir("fileio_read_lines_missing")
     missing = case / "missing.txt"
@@ -512,6 +565,58 @@ def test_fileio_patch_file_unified_diff(client: McpStdioClient) -> None:
 """
     client.tool_call("fileio_patch_file", {"path": str(path), "patch": diff, "format": "unified_diff"})
     _assert(path.read_text().splitlines() == ["line 1", "line two", "line 3"], "Unexpected unified_diff patch result")
+
+
+def test_fileio_patch_file_unified_diff_empty_file_add_line(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_patch_file_unified_diff_empty_add")
+    path = case / "patch.txt"
+    path.write_text("")
+    diff = "--- a\n+++ b\n@@\n+first"
+    client.tool_call("fileio_patch_file", {"path": str(path), "patch": diff, "format": "unified_diff"})
+    _assert(path.read_text() == "first", f"Unexpected unified_diff patched content: {path.read_text()!r}")
+
+
+def test_fileio_patch_file_unified_diff_add_at_end(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_patch_file_unified_diff_add_end")
+    path = case / "patch.txt"
+    path.write_text("line 1\nline 2\n")
+    diff = "--- a\n+++ b\n@@\n line 1\n line 2\n+line 3"
+    client.tool_call("fileio_patch_file", {"path": str(path), "patch": diff, "format": "unified_diff"})
+    _assert(
+        path.read_text() == "line 1\nline 2\nline 3",
+        f"Unexpected unified_diff patched content: {path.read_text()!r}",
+    )
+
+
+def test_fileio_patch_file_add_remove_lines_empty_file_add_first_line(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_patch_file_add_remove_empty_add")
+    path = case / "patch.txt"
+    path.write_text("")
+    patch = json.dumps({"operations": [{"type": "add", "line": 1, "content": "first"}]})
+    client.tool_call("fileio_patch_file", {"path": str(path), "patch": patch, "format": "add_remove_lines"})
+    _assert(path.read_text() == "first", f"Unexpected add_remove_lines patched content: {path.read_text()!r}")
+
+
+def test_fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_patch_file_add_remove_invalid_line")
+    path = case / "patch.txt"
+    path.write_text("")
+    patch = json.dumps({"operations": [{"type": "add", "line": 2, "content": "x"}]})
+    _assert_raises(
+        "Invalid line number",
+        lambda: client.tool_call("fileio_patch_file", {"path": str(path), "patch": patch, "format": "add_remove_lines"}),
+    )
+
+
+def test_fileio_patch_file_add_remove_lines_negative_line_rejected(client: McpStdioClient) -> None:
+    case = _new_case_dir("fileio_patch_file_add_remove_negative_line")
+    path = case / "patch.txt"
+    path.write_text("a\n")
+    patch = '{"operations": [{"type": "remove", "line": -1}]}'
+    _assert_raises(
+        "numeric",
+        lambda: client.tool_call("fileio_patch_file", {"path": str(path), "patch": patch, "format": "add_remove_lines"}),
+    )
 
 
 def test_fileio_copy(client: McpStdioClient) -> None:
@@ -943,6 +1048,11 @@ def main() -> int:
         TestCase("fileio_read_lines_range", "fileio_read_lines", test_fileio_read_lines_range),
         TestCase("fileio_read_lines_line_count", "fileio_read_lines", test_fileio_read_lines_line_count),
         TestCase("fileio_read_lines_start_offset", "fileio_read_lines", test_fileio_read_lines_start_offset),
+        TestCase("fileio_read_lines_empty_file_returns_empty", "fileio_read_lines", test_fileio_read_lines_empty_file_returns_empty),
+        TestCase("fileio_read_lines_end_past_eof_clamps", "fileio_read_lines", test_fileio_read_lines_end_past_eof_clamps),
+        TestCase("fileio_read_lines_start_line_beyond_eof_errors", "fileio_read_lines", test_fileio_read_lines_start_line_beyond_eof_errors),
+        TestCase("fileio_read_lines_end_before_start_errors", "fileio_read_lines", test_fileio_read_lines_end_before_start_errors),
+        TestCase("fileio_read_lines_negative_numbers_rejected", "fileio_read_lines", test_fileio_read_lines_negative_numbers_rejected),
         TestCase("fileio_read_lines_missing_errors", "fileio_read_lines", test_fileio_read_lines_missing_errors),
         TestCase("fileio_set_permissions", "fileio_set_permissions", test_fileio_set_permissions),
         TestCase("fileio_set_permissions_multiple_paths", "fileio_set_permissions", test_fileio_set_permissions_multiple_paths),
@@ -965,6 +1075,11 @@ def main() -> int:
         TestCase("fileio_find_in_files_whole_word", "fileio_find_in_files", test_fileio_find_in_files_whole_word),
         TestCase("fileio_patch_file_add_remove", "fileio_patch_file", test_fileio_patch_file_add_remove),
         TestCase("fileio_patch_file_unified_diff", "fileio_patch_file", test_fileio_patch_file_unified_diff),
+        TestCase("fileio_patch_file_unified_diff_empty_file_add_line", "fileio_patch_file", test_fileio_patch_file_unified_diff_empty_file_add_line),
+        TestCase("fileio_patch_file_unified_diff_add_at_end", "fileio_patch_file", test_fileio_patch_file_unified_diff_add_at_end),
+        TestCase("fileio_patch_file_add_remove_lines_empty_file_add_first_line", "fileio_patch_file", test_fileio_patch_file_add_remove_lines_empty_file_add_first_line),
+        TestCase("fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors", "fileio_patch_file", test_fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors),
+        TestCase("fileio_patch_file_add_remove_lines_negative_line_rejected", "fileio_patch_file", test_fileio_patch_file_add_remove_lines_negative_line_rejected),
         TestCase("fileio_copy", "fileio_copy", test_fileio_copy),
         TestCase("fileio_copy_dir_recursive", "fileio_copy", test_fileio_copy_dir_recursive),
         TestCase("fileio_copy_dir_without_recursive_errors", "fileio_copy", test_fileio_copy_dir_without_recursive_errors),

@@ -205,4 +205,83 @@ mod tests {
         // Expect an error because operation objects must have a 'type' field
         assert!(res.is_err(), "expected error for invalid operation key");
     }
+
+    #[test]
+    fn test_add_remove_lines_empty_file_add_first_line() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, "").unwrap();
+
+        let patch = r#"{ "operations": [ {"type": "add", "line": 1, "content": "first"} ] }"#;
+        patch_file(path, patch, Some("add_remove_lines")).unwrap();
+
+        let content = fs::read_to_string(path).unwrap();
+        assert_eq!(content, "first");
+    }
+
+    #[test]
+    fn test_add_remove_lines_invalid_line_number_beyond_end() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, "").unwrap();
+
+        let patch = r#"{ "operations": [ {"type": "add", "line": 2, "content": "x"} ] }"#;
+        let res = patch_file(path, patch, Some("add_remove_lines"));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_add_remove_lines_negative_line_rejected() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, "a\n").unwrap();
+
+        let patch = r#"{ "operations": [ {"type": "remove", "line": -1} ] }"#;
+        let res = patch_file(path, patch, Some("add_remove_lines"));
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_unified_diff_empty_file_add_line() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, "").unwrap();
+
+        let diff = "--- a\n+++ b\n@@\n+first";
+        patch_file(path, diff, Some("unified_diff")).unwrap();
+
+        let content = fs::read_to_string(path).unwrap();
+        assert_eq!(content, "first");
+    }
+
+    #[test]
+    fn test_unified_diff_modify_first_line_and_preserve_rest() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "line 1").unwrap();
+        writeln!(file, "line 2").unwrap();
+        writeln!(file, "line 3").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let diff = "--- a\n+++ b\n@@\n-line 1\n+LINE 1\n line 2";
+        patch_file(path, diff, Some("unified_diff")).unwrap();
+
+        let content = fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines, vec!["LINE 1", "line 2", "line 3"]);
+    }
+
+    #[test]
+    fn test_unified_diff_add_at_end() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "line 1").unwrap();
+        writeln!(file, "line 2").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let diff = "--- a\n+++ b\n@@\n line 1\n line 2\n+line 3";
+        patch_file(path, diff, Some("unified_diff")).unwrap();
+
+        let content = fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines, vec!["line 1", "line 2", "line 3"]);
+    }
 }

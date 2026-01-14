@@ -150,4 +150,78 @@ mod tests {
         assert_eq!(lines[0], "line 2");
         assert_eq!(lines[1], "line 3");
     }
+
+    #[test]
+    fn test_read_lines_empty_file_returns_empty() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let lines = read_lines(path, None, None, None, None).unwrap();
+        assert!(lines.is_empty());
+
+        // Current behavior: start_line=1 on an empty file returns empty (not error).
+        let lines = read_lines(path, Some(1), Some(1), None, None).unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_read_lines_end_past_eof_clamps() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a").unwrap();
+        writeln!(file, "b").unwrap();
+        writeln!(file, "c").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let lines = read_lines(path, Some(2), Some(999), None, None).unwrap();
+        assert_eq!(lines, vec!["b".to_string(), "c".to_string()]);
+
+        let lines = read_lines(path, Some(2), None, Some(999), None).unwrap();
+        assert_eq!(lines, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_read_lines_start_line_beyond_eof_errors() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let res = read_lines(path, Some(3), None, None, None);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_read_lines_end_before_start_errors() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a").unwrap();
+        writeln!(file, "b").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let res = read_lines(path, Some(2), Some(1), None, None);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_read_lines_start_line_zero_errors() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let res = read_lines(path, Some(0), None, None, None);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_read_lines_start_offset_at_or_past_eof() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a").unwrap();
+        writeln!(file, "b").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        // start_offset is treated as a 0-based line index.
+        let lines = read_lines(path, None, None, Some(10), Some(2)).unwrap();
+        assert!(lines.is_empty());
+
+        let res = read_lines(path, None, None, Some(1), Some(3));
+        assert!(res.is_err());
+    }
 }
