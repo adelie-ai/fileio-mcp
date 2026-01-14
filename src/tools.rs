@@ -538,20 +538,6 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_change_root",
-                "description": "Change root directory (chroot equivalent). Changes the root directory of the current process to the specified path. This is a system-level operation that requires root privileges. After chroot, the process can only access files within the new root directory. The new_root must exist and be a directory. This operation affects the entire process and cannot be undone. Use with extreme caution.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "new_root": {
-                            "type": "string",
-                            "description": "New root directory path. Must exist and be a directory. Requires root/administrator privileges. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
-                        }
-                    },
-                    "required": ["new_root"]
-                }
-            },
-            {
                 "name": "fileio_get_current_directory",
                 "description": "Get the current working directory (pwd equivalent). Returns the absolute path of the current working directory. Useful for determining where relative paths will be resolved from, or for getting the current location in the file system.",
                 "inputSchema": {
@@ -1192,25 +1178,6 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": "Ownership changed successfully"
-                    }]
-                }))
-            }
-            "fileio_change_root" => {
-                let new_root = args
-                    .get("new_root")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: new_root".to_string(),
-                        )
-                    })?;
-
-                crate::operations::chroot::chroot(new_root)?;
-
-                Ok(serde_json::json!({
-                    "content": [{
-                        "type": "text",
-                        "text": "Root directory changed successfully"
                     }]
                 }))
             }

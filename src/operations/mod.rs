@@ -3,7 +3,6 @@
 // File I/O operation implementations
 
 pub mod chown;
-pub mod chroot;
 pub mod count_lines;
 pub mod count_words;
 pub mod cp;

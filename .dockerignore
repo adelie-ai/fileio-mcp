@@ -1,0 +1,13 @@
+target/
+.venv/
+.git/
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
