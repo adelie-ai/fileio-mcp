@@ -654,13 +654,13 @@ impl ToolRegistry {
                     path, start_line, end_line, line_count, start_offset,
                 )?;
 
-                let lines_json = serde_json::to_string(&lines)
+                let lines_value = serde_json::to_value(&lines)
                     .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": lines_json
+                        "type": "json",
+                        "value": lines_value
                     }]
                 }))
             }
@@ -728,13 +728,13 @@ impl ToolRegistry {
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
-                let modes_json = serde_json::to_string(&modes)
+                let modes_value = serde_json::to_value(&modes)
                     .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": modes_json
+                        "type": "json",
+                        "value": modes_value
                     }]
                 }))
             }
@@ -767,13 +767,11 @@ impl ToolRegistry {
 
                 let stat_results = crate::operations::stat::stat(&path_refs)?;
                 let stat_json_array: Vec<Value> = stat_results.into_iter().map(|s| s.into()).collect();
-                let stat_text = serde_json::to_string(&stat_json_array)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": stat_text
+                        "type": "json",
+                        "value": serde_json::Value::Array(stat_json_array)
                     }]
                 }))
             }
@@ -811,13 +809,10 @@ impl ToolRegistry {
                 let entries = crate::operations::list_dir::list_directory(path, recursive, include_hidden)?;
                 let entries_json: Vec<Value> = entries.into_iter().map(|e| e.into()).collect();
 
-                let entries_text = serde_json::to_string(&entries_json)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": entries_text
+                        "type": "json",
+                        "value": serde_json::Value::Array(entries_json)
                     }]
                 }))
             }
@@ -835,14 +830,12 @@ impl ToolRegistry {
                 let file_type = args.get("file_type").and_then(|v| v.as_str());
 
                 let matches = crate::operations::file_find::file_find(pattern, root, max_depth, file_type)?;
-
-                let matches_text = serde_json::to_string(&matches)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
+                let matches_json: Vec<Value> = matches.into_iter().map(|m| m.into()).collect();
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": matches_text
+                        "type": "json",
+                        "value": serde_json::Value::Array(matches_json)
                     }]
                 }))
             }
@@ -886,16 +879,12 @@ impl ToolRegistry {
                     whole_word,
                     multiline,
                 )?;
-
                 let matches_json: Vec<Value> = matches.into_iter().map(|m| m.into()).collect();
-
-                let matches_text = serde_json::to_string(&matches_json)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": matches_text
+                        "type": "json",
+                        "value": serde_json::Value::Array(matches_json)
                     }]
                 }))
             }
@@ -945,12 +934,14 @@ impl ToolRegistry {
                     })?;
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                crate::operations::cp::cp(&source_refs, destination, recursive)?;
+                let results = crate::operations::cp::cp(&source_refs, destination, recursive)?;
+                let results_value = serde_json::to_value(&results)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": "File(s) or directory(ies) copied successfully"
+                        "type": "json",
+                        "value": results_value
                     }]
                 }))
             }
@@ -971,12 +962,14 @@ impl ToolRegistry {
                         )
                     })?;
 
-                crate::operations::mv::mv(&source_refs, destination)?;
+                let results = crate::operations::mv::mv(&source_refs, destination)?;
+                let results_value = serde_json::to_value(&results)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": "File(s) or directory(ies) moved successfully"
+                        "type": "json",
+                        "value": results_value
                     }]
                 }))
             }
@@ -991,12 +984,14 @@ impl ToolRegistry {
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
                 let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                crate::operations::rm::rm(&path_refs, recursive, force)?;
+                let results = crate::operations::rm::rm(&path_refs, recursive, force)?;
+                let results_value = serde_json::to_value(&results)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": "File(s) or directory(ies) removed successfully"
+                        "type": "json",
+                        "value": results_value
                     }]
                 }))
             }
@@ -1010,12 +1005,14 @@ impl ToolRegistry {
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                crate::operations::rmdir::rmdir(&path_refs, recursive)?;
+                let results = crate::operations::rmdir::rmdir(&path_refs, recursive)?;
+                let results_value = serde_json::to_value(&results)
+                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "text",
-                        "text": "Directory(ies) removed successfully"
+                        "type": "json",
+                        "value": results_value
                     }]
                 }))
             }

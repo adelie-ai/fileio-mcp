@@ -53,7 +53,16 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
 }
 
 /// Move or rename files or directories (supports glob patterns and arrays of paths)
-pub fn mv(sources: &[&str], destination: &str) -> Result<()> {
+#[derive(Debug, serde::Serialize)]
+pub struct OpResult {
+    pub path: String,
+    pub status: String,
+    pub exists: bool,
+}
+
+/// Move or rename files or directories (supports glob patterns and arrays of paths)
+/// Returns per-source results and does not fail the whole call for per-file errors.
+pub fn mv(sources: &[&str], destination: &str) -> Result<Vec<OpResult>> {
     let expanded_dest = shellexpand::full(destination)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", destination, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -87,6 +96,7 @@ pub fn mv(sources: &[&str], destination: &str) -> Result<()> {
         ).into());
     }
 
+    let mut results = Vec::new();
     for source_path in &all_sources {
         let dest = if dest_is_dir {
             let source_path_obj = Path::new(source_path);
@@ -95,10 +105,16 @@ pub fn mv(sources: &[&str], destination: &str) -> Result<()> {
             dest_path.to_path_buf()
         };
 
-        mv_single(source_path, dest.to_str().unwrap())?;
+        match mv_single(source_path, dest.to_str().unwrap()) {
+            Ok(()) => results.push(OpResult { path: source_path.clone(), status: "ok".to_string(), exists: true }),
+            Err(e) => {
+                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                results.push(OpResult { path: source_path.clone(), status: format!("error: {}", e), exists: !is_not_found });
+            }
+        }
     }
 
-    Ok(())
+    Ok(results)
 }
 
 /// Move a single file or directory
@@ -152,7 +168,9 @@ mod tests {
         let dst = dir.path().join("dest.txt");
 
         fs::write(&src, "content").unwrap();
-        mv(&[src.to_str().unwrap()], dst.to_str().unwrap()).unwrap();
+        let results = mv(&[src.to_str().unwrap()], dst.to_str().unwrap()).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "ok");
 
         assert!(!src.exists());
         assert!(dst.exists());
@@ -171,7 +189,8 @@ mod tests {
         fs::create_dir_all(&dst_dir).unwrap();
 
         let pattern = base.join("*.txt").to_str().unwrap().to_string();
-        mv(&[&pattern], dst_dir.to_str().unwrap()).unwrap();
+        let results = mv(&[&pattern], dst_dir.to_str().unwrap()).unwrap();
+        assert!(results.iter().all(|r| r.status == "ok"));
 
         assert!(!base.join("file1.txt").exists());
         assert!(!base.join("file2.txt").exists());

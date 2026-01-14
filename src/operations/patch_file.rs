@@ -8,7 +8,7 @@ use std::fs;
 /// Apply a patch to a file
 pub fn patch_file(path: &str, patch: &str, format: Option<&str>) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
     let format = format.unwrap_or("unified_diff");
 
@@ -93,16 +93,22 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
             FileIoError::PatchError("Patch JSON must contain 'operations' array".to_string())
         })?;
 
-    // Sort operations by line number (descending) so removals don't affect indices
-    let mut sorted_ops: Vec<_> = operations
-        .iter()
-        .filter_map(|op| {
-            let op_type = op.get("type")?.as_str()?;
-            let line = op.get("line")?.as_u64()? as usize;
-            Some((op_type, line, op))
-        })
-        .collect();
-    sorted_ops.sort_by(|a, b| b.1.cmp(&a.1)); // Sort descending by line number
+    // Validate and collect operations, ensuring required fields exist
+    let mut sorted_ops: Vec<(&str, usize, &serde_json::Value)> = Vec::new();
+    for op in operations {
+        let op_type = op
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| FileIoError::PatchError("Each operation must have a string 'type' field".to_string()))?;
+        let line = op
+            .get("line")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| FileIoError::PatchError("Each operation must have a numeric 'line' field".to_string()))?
+            as usize;
+        sorted_ops.push((op_type, line, op));
+    }
+    // Sort descending by line number so removals don't affect indices
+    sorted_ops.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Apply operations
     for (op_type, line_num, op) in sorted_ops {
@@ -155,6 +161,7 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
     Ok(())
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +190,19 @@ mod tests {
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[1], "line 1.5");
+    }
+
+    // New test: malformed operations (using 'op' instead of 'type') should be rejected
+    #[test]
+    fn test_patch_rejects_wrong_key() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "line 1").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let patch = r#"{ "operations": [ {"op": "add", "line": 2, "content": "line 1.5"} ] }"#;
+        let res = patch_file(path, patch, Some("add_remove_lines"));
+
+        // Expect an error because operation objects must have a 'type' field
+        assert!(res.is_err(), "expected error for invalid operation key");
     }
 }

@@ -6,26 +6,41 @@ use crate::error::{FileIoError, Result};
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, serde::Serialize)]
+pub struct WordCountResult {
+    pub path: String,
+    pub status: String,
+    pub words: Option<u64>,
+    pub exists: bool,
+}
+
 /// Count words in files (whitespace-separated)
-/// Can accept a single path or multiple paths, returns a map of path -> word count
-pub fn count_words(paths: &[&str]) -> Result<std::collections::HashMap<String, u64>> {
-    let mut results = std::collections::HashMap::new();
-    let mut errors = Vec::new();
+/// Returns a vector of results: { path, status, words }
+pub fn count_words(paths: &[&str]) -> Result<Vec<WordCountResult>> {
+    let mut results = Vec::new();
     for path in paths {
         match count_words_single(path) {
-            Ok(count) => {
-                results.insert(path.to_string(), count);
-            }
+            Ok(count) => results.push(WordCountResult {
+                path: path.to_string(),
+                status: "ok".to_string(),
+                words: Some(count),
+                exists: true,
+            }),
             Err(e) => {
-                errors.push(format!("{}: {}", path, e));
+                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                let status = if is_not_found {
+                    "error: not found".to_string()
+                } else {
+                    format!("error: {}", e)
+                };
+                results.push(WordCountResult {
+                    path: path.to_string(),
+                    status,
+                    words: None,
+                    exists: !is_not_found,
+                });
             }
         }
-    }
-    if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
-            "Some word count operations failed: {}",
-            errors.join("; ")
-        ))));
     }
     Ok(results)
 }
@@ -67,9 +82,10 @@ mod tests {
         writeln!(file, "foo bar").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let counts = count_words(&[path]).unwrap();
-        let count = *counts.get(path).unwrap();
-        assert_eq!(count, 4); // hello, world, foo, bar
+        let results = count_words(&[path]).unwrap();
+        let r = &results[0];
+        assert_eq!(r.status, "ok");
+        assert_eq!(r.words, Some(4)); // hello, world, foo, bar
     }
 
     #[test]
@@ -77,9 +93,10 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        let counts = count_words(&[path]).unwrap();
-        let count = *counts.get(path).unwrap();
-        assert_eq!(count, 0);
+        let results = count_words(&[path]).unwrap();
+        let r = &results[0];
+        assert_eq!(r.status, "ok");
+        assert_eq!(r.words, Some(0));
     }
 
     #[test]
@@ -88,8 +105,9 @@ mod tests {
         writeln!(file, "word1    word2   word3").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let counts = count_words(&[path]).unwrap();
-        let count = *counts.get(path).unwrap();
-        assert_eq!(count, 3);
+        let results = count_words(&[path]).unwrap();
+        let r = &results[0];
+        assert_eq!(r.status, "ok");
+        assert_eq!(r.words, Some(3));
     }
 }

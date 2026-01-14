@@ -19,6 +19,7 @@ pub struct FileStat {
     pub is_file: bool,
     pub is_dir: bool,
     pub is_symlink: bool,
+    pub exists: bool,
 }
 
 /// Get file or directory statistics
@@ -50,8 +51,21 @@ pub fn stat_single(path: &str) -> Result<FileStat> {
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
+    // If the path does not exist, return a sentinel FileStat rather than an error.
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
+        return Ok(FileStat {
+            path: expanded_path.clone(),
+            entry_type: "not_found".to_string(),
+            size: 0,
+            mode: None,
+            modified: None,
+            accessed: None,
+            created: None,
+            is_file: false,
+            is_dir: false,
+            is_symlink: false,
+            exists: false,
+        });
     }
 
     let metadata = fs::metadata(&expanded_path).map_err(|e| {
@@ -129,6 +143,7 @@ pub fn stat_single(path: &str) -> Result<FileStat> {
         is_file: path_obj.is_file(),
         is_dir: path_obj.is_dir(),
         is_symlink: path_obj.is_symlink(),
+        exists: true,
     })
 }
 
@@ -153,6 +168,7 @@ impl From<FileStat> for Value {
         obj.insert("is_file".to_string(), Value::Bool(stat.is_file));
         obj.insert("is_dir".to_string(), Value::Bool(stat.is_dir));
         obj.insert("is_symlink".to_string(), Value::Bool(stat.is_symlink));
+        obj.insert("exists".to_string(), Value::Bool(stat.exists));
         Value::Object(obj)
     }
 }
@@ -188,7 +204,8 @@ mod tests {
 
     #[test]
     fn test_stat_not_found() {
-        let result = stat(&["/nonexistent/path/that/does/not/exist"]);
-        assert!(result.is_err());
+        let result = stat(&["/nonexistent/path/that/does/not/exist"]).unwrap();
+        let stat_result = &result[0];
+        assert_eq!(stat_result.entry_type, "not_found");
     }
 }

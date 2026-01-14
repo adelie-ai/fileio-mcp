@@ -27,8 +27,9 @@ pub fn list_directory(
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
+    // If the path doesn't exist, treat as non-fatal: return empty entries.
     if !path_obj.exists() {
-        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
+        return Ok(Vec::new());
     }
 
     if !path_obj.is_dir() {

@@ -1,0 +1,1 @@
+/home/dave/projects/fileio-mcp/ai-fileio/file2.txt

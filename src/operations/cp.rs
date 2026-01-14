@@ -53,7 +53,16 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
 }
 
 /// Copy files or directories (supports glob patterns and arrays of paths)
-pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<()> {
+#[derive(Debug, serde::Serialize)]
+pub struct OpResult {
+    pub path: String,
+    pub status: String,
+    pub exists: bool,
+}
+
+/// Copy files or directories (supports glob patterns and arrays of paths)
+/// Returns per-source results instead of failing the whole call for per-file errors.
+pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<Vec<OpResult>> {
     let expanded_dest = shellexpand::full(destination)
         .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", destination, e))))
         .map(|expanded| expanded.into_owned())?;
@@ -69,6 +78,7 @@ pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<()> {
             let matches = expand_glob(source)?;
             
             if matches.is_empty() {
+                // No matches for this glob pattern — treat as an argument-level NotFound error
                 return Err(FileIoError::NotFound(format!("No files match pattern: {}", source)).into());
             }
 
@@ -87,6 +97,7 @@ pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<()> {
         ).into());
     }
 
+    let mut results = Vec::new();
     for source_path in &all_sources {
         let dest = if dest_is_dir {
             let source_path_obj = Path::new(source_path);
@@ -95,10 +106,16 @@ pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<()> {
             dest_path.to_path_buf()
         };
 
-        cp_single(source_path, dest.to_str().unwrap(), recursive)?;
+        match cp_single(source_path, dest.to_str().unwrap(), recursive) {
+            Ok(()) => results.push(OpResult { path: source_path.clone(), status: "ok".to_string(), exists: true }),
+            Err(e) => {
+                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                results.push(OpResult { path: source_path.clone(), status: format!("error: {}", e), exists: !is_not_found });
+            }
+        }
     }
 
-    Ok(())
+    Ok(results)
 }
 
 /// Copy a single file or directory
@@ -194,7 +211,9 @@ mod tests {
         let dst = dir.path().join("dest.txt");
 
         fs::write(&src, "content").unwrap();
-        cp(&[src.to_str().unwrap()], dst.to_str().unwrap(), false).unwrap();
+        let results = cp(&[src.to_str().unwrap()], dst.to_str().unwrap(), false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "ok");
 
         assert!(dst.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "content");
@@ -209,7 +228,9 @@ mod tests {
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(src_dir.join("file.txt"), "content").unwrap();
 
-        cp(&[src_dir.to_str().unwrap()], dst_dir.to_str().unwrap(), true).unwrap();
+        let results = cp(&[src_dir.to_str().unwrap()], dst_dir.to_str().unwrap(), true).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "ok");
 
         assert!(dst_dir.exists());
         assert!(dst_dir.join("file.txt").exists());
@@ -227,7 +248,8 @@ mod tests {
         fs::create_dir_all(&dst_dir).unwrap();
 
         let pattern = base.join("*.txt").to_str().unwrap().to_string();
-        cp(&[&pattern], dst_dir.to_str().unwrap(), false).unwrap();
+        let results = cp(&[&pattern], dst_dir.to_str().unwrap(), false).unwrap();
+        assert!(results.iter().all(|r| r.status == "ok"));
 
         assert!(dst_dir.join("file1.txt").exists());
         assert!(dst_dir.join("file2.txt").exists());

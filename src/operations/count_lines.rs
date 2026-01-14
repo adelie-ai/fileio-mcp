@@ -7,26 +7,42 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+#[derive(Debug, serde::Serialize)]
+pub struct LineCountResult {
+    pub path: String,
+    pub status: String,
+    pub lines: Option<u64>,
+    pub exists: bool,
+}
+
 /// Count lines in files
-/// Can accept a single path or multiple paths, returns a map of path -> line count
-pub fn count_lines(paths: &[&str]) -> Result<std::collections::HashMap<String, u64>> {
-    let mut results = std::collections::HashMap::new();
-    let mut errors = Vec::new();
+/// Returns a vector of results: { path, status, lines }
+pub fn count_lines(paths: &[&str]) -> Result<Vec<LineCountResult>> {
+    let mut results = Vec::new();
     for path in paths {
         match count_lines_single(path) {
-            Ok(count) => {
-                results.insert(path.to_string(), count);
-            }
+            Ok(count) => results.push(LineCountResult {
+                path: path.to_string(),
+                status: "ok".to_string(),
+                lines: Some(count),
+                exists: true,
+            }),
             Err(e) => {
-                errors.push(format!("{}: {}", path, e));
+                // Map NotFound to a clear status; other errors include message
+                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                let status = if is_not_found {
+                    "error: not found".to_string()
+                } else {
+                    format!("error: {}", e)
+                };
+                results.push(LineCountResult {
+                    path: path.to_string(),
+                    status,
+                    lines: None,
+                    exists: !is_not_found, // false if not found
+                });
             }
         }
-    }
-    if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
-            "Some line count operations failed: {}",
-            errors.join("; ")
-        ))));
     }
     Ok(results)
 }
@@ -69,9 +85,11 @@ mod tests {
         writeln!(file, "line 3").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let counts = count_lines(&[path]).unwrap();
-        let count = *counts.get(path).unwrap();
-        assert_eq!(count, 3);
+        let results = count_lines(&[path]).unwrap();
+        let r = &results[0];
+        assert_eq!(r.path, path.to_string());
+        assert_eq!(r.status, "ok");
+        assert_eq!(r.lines, Some(3));
     }
 
     #[test]
@@ -79,9 +97,10 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_str().unwrap();
 
-        let counts = count_lines(&[path]).unwrap();
-        let count = *counts.get(path).unwrap();
-        assert_eq!(count, 0);
+        let results = count_lines(&[path]).unwrap();
+        let r = &results[0];
+        assert_eq!(r.status, "ok");
+        assert_eq!(r.lines, Some(0));
     }
 
     #[test]
@@ -90,8 +109,9 @@ mod tests {
         write!(file, "single line").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let counts = count_lines(&[path]).unwrap();
-        let count = *counts.get(path).unwrap();
-        assert_eq!(count, 1);
+        let results = count_lines(&[path]).unwrap();
+        let r = &results[0];
+        assert_eq!(r.status, "ok");
+        assert_eq!(r.lines, Some(1));
     }
 }

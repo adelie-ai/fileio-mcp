@@ -9,9 +9,10 @@ use std::path::Path;
 /// Get the basename (filename) from a path
 pub fn basename(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
+    
     path_obj
         .file_name()
         .and_then(|n| n.to_str())
@@ -24,7 +25,7 @@ pub fn basename(path: &str) -> Result<String> {
 /// Get the dirname (directory path) from a path
 pub fn dirname(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
     path_obj
@@ -38,7 +39,7 @@ pub fn dirname(path: &str) -> Result<String> {
 /// Get the real (canonical) path, resolving all symlinks
 pub fn realpath(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -62,15 +63,15 @@ pub fn realpath(path: &str) -> Result<String> {
 /// Read the target of a symbolic link
 pub fn readlink(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
         .map(|expanded| expanded.into_owned())?;
-    let path_obj = Path::new(&expanded_path);
+    // Use symlink_metadata so we don't follow the symlink. This lets us
+    // observe and read broken symlinks (they may point at non-existent targets).
+    let metadata = fs::symlink_metadata(&expanded_path).map_err(|e| {
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("lstat path", &expanded_path, e))
+    })?;
 
-    if !path_obj.exists() {
-        return Err(FileIoError::NotFound(expanded_path.to_string()).into());
-    }
-
-    if !path_obj.is_symlink() {
+    if !metadata.file_type().is_symlink() {
         return Err(FileIoError::InvalidPath(format!("{} is not a symbolic link", expanded_path)).into());
     }
 
@@ -88,6 +89,7 @@ pub fn readlink(path: &str) -> Result<String> {
             .into()
         })
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -115,5 +117,32 @@ mod tests {
 
         let real = realpath(file.to_str().unwrap()).unwrap();
         assert!(real.contains("file.txt"));
+    }
+
+    // New test: reading a broken symlink should return the stored target path
+    #[test]
+    #[cfg(unix)]
+    fn test_readlink_broken_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("no_such_file.txt");
+        let link = dir.path().join("broken_link");
+
+        // Create a symlink pointing to a non-existent target
+        symlink(&target, &link).unwrap();
+
+        // Expectation: readlink should return the stored target path even if it doesn't exist
+        let read = readlink(link.to_str().unwrap()).unwrap();
+        assert_eq!(read, target.to_str().unwrap());
+    }
+
+    #[test]
+    fn test_readlink_non_symlink_errors() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("file.txt");
+        fs::write(&file, "content").unwrap();
+
+        let res = readlink(file.to_str().unwrap());
+        assert!(res.is_err());
     }
 }

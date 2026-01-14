@@ -8,20 +8,18 @@ use std::path::Path;
 
 /// Remove directories (wrapper around rm with recursive flag)
 /// Can accept a single path or multiple paths
-pub fn rmdir(paths: &[&str], recursive: bool) -> Result<()> {
-    let mut errors = Vec::new();
+pub fn rmdir(paths: &[&str], recursive: bool) -> Result<Vec<super::mv::OpResult>> {
+    let mut results = Vec::new();
     for path in paths {
-        if let Err(e) = rmdir_single(path, recursive) {
-            errors.push(format!("{}: {}", path, e));
+        match rmdir_single(path, recursive) {
+            Ok(()) => results.push(super::mv::OpResult { path: path.to_string(), status: "ok".to_string(), exists: true }),
+            Err(e) => {
+                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                results.push(super::mv::OpResult { path: path.to_string(), status: format!("error: {}", e), exists: !is_not_found });
+            }
         }
     }
-    if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
-            "Some directory removals failed: {}",
-            errors.join("; ")
-        ))));
-    }
-    Ok(())
+    Ok(results)
 }
 
 /// Remove a single directory (wrapper around rm with recursive flag)
@@ -52,7 +50,17 @@ pub fn rmdir_single(path: &str, recursive: bool) -> Result<()> {
         }
     }
 
-    rm::rm(&[&expanded_path], recursive, false)
+    // Use rm::rm which now returns per-path results; translate single-entry result to Result<()> for callers
+    let results = rm::rm(&[&expanded_path], recursive, false)?;
+    if let Some(r) = results.get(0) {
+        if r.status == "ok" {
+            Ok(())
+        } else {
+            Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!("Removal failed: {}: {}", r.path, r.status))))
+        }
+    } else {
+        Err(crate::error::FileIoMcpError::from(FileIoError::WriteError("No result from rm".to_string())))
+    }
 }
 
 #[cfg(test)]
@@ -67,7 +75,9 @@ mod tests {
         let subdir = dir.path().join("subdir");
         fs::create_dir_all(&subdir).unwrap();
 
-        rmdir(&[subdir.to_str().unwrap()], false).unwrap();
+        let results = rmdir(&[subdir.to_str().unwrap()], false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "ok");
         assert!(!subdir.exists());
     }
 
@@ -78,7 +88,9 @@ mod tests {
         fs::create_dir_all(&subdir).unwrap();
         fs::write(subdir.join("file.txt"), "content").unwrap();
 
-        rmdir(&[subdir.to_str().unwrap()], true).unwrap();
+        let results = rmdir(&[subdir.to_str().unwrap()], true).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "ok");
         assert!(!subdir.exists());
     }
 }
