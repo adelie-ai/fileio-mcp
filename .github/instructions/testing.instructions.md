@@ -7,6 +7,14 @@ This repo uses a Python-based MCP integration test harness that spawns the serve
 - Test runner: `scripts/test_fileio_tools.py`
 - Test workspace: created as a temporary directory at runtime
 
+## Rust integration tests
+
+There is also a Rust integration test suite that speaks MCP JSON-RPC over stdio:
+
+- Rust suite: `tests/mcp_stdio_suite.rs`
+
+This suite spawns `fileio-mcp serve --mode stdio`, performs MCP initialization, and exercises a representative set of tools end-to-end.
+
 The harness is intentionally **one tool call per test**:
 1) Python sets up preconditions (files/dirs/links)
 2) Exactly one MCP `tools/call` is performed
@@ -45,6 +53,12 @@ Local (not the primary supported path):
 
 ```bash
 ./.venv/bin/python -u scripts/test_fileio_tools.py
+```
+
+Rust-only (no Python):
+
+```bash
+cargo test
 ```
 
 Environment toggles:

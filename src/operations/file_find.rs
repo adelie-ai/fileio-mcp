@@ -13,11 +13,17 @@ pub fn file_find(
     max_depth: Option<usize>,
     file_type: Option<&str>,
 ) -> Result<Vec<String>> {
-    let expanded_root = root.map(|r| {
-        shellexpand::full(r)
-            .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}': {}", r, e))))
-            .map(|expanded| expanded.into_owned())
-    }).transpose()?;
+    let expanded_root = root
+        .map(|r| {
+            shellexpand::full(r)
+                .map_err(|e| {
+                    crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(
+                        format!("Failed to expand path '{}': {}", r, e),
+                    ))
+                })
+                .map(|expanded| expanded.into_owned())
+        })
+        .transpose()?;
     let root_path = expanded_root
         .as_ref()
         .map(|r| Path::new(r))
@@ -52,15 +58,11 @@ pub fn file_find(
     let mut matches = Vec::new();
 
     for result in walker.build() {
-        let entry = result.map_err(|e| {
-            FileIoError::ReadError(format!("Error walking directory: {}", e))
-        })?;
+        let entry = result
+            .map_err(|e| FileIoError::ReadError(format!("Error walking directory: {}", e)))?;
 
         let path = entry.path();
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         // Check if filename matches pattern
         if regex_pattern.is_match(file_name) {

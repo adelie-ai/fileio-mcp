@@ -36,10 +36,9 @@ pub fn stat(paths: &[&str]) -> Result<Vec<FileStat>> {
         }
     }
     if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
-            "Some stat queries failed: {}",
-            errors.join("; ")
-        ))));
+        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(
+            format!("Some stat queries failed: {}", errors.join("; ")),
+        )));
     }
     Ok(results)
 }
@@ -47,7 +46,12 @@ pub fn stat(paths: &[&str]) -> Result<Vec<FileStat>> {
 /// Get file or directory statistics for a single path
 pub fn stat_single(path: &str) -> Result<FileStat> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -69,7 +73,11 @@ pub fn stat_single(path: &str) -> Result<FileStat> {
     }
 
     let metadata = fs::metadata(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read metadata", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "read metadata",
+            &expanded_path,
+            e,
+        ))
     })?;
 
     let entry_type = if path_obj.is_dir() {
@@ -94,43 +102,31 @@ pub fn stat_single(path: &str) -> Result<FileStat> {
     #[cfg(not(unix))]
     let mode: Option<String> = None;
 
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|t| {
-            t.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
+    let modified = metadata.modified().ok().and_then(|t| {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs().to_string())
+    });
 
-    let accessed = metadata
-        .accessed()
-        .ok()
-        .and_then(|t| {
-            t.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
+    let accessed = metadata.accessed().ok().and_then(|t| {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs().to_string())
+    });
 
     #[cfg(unix)]
-    let created = metadata
-        .created()
-        .ok()
-        .and_then(|t| {
-            t.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
+    let created = metadata.created().ok().and_then(|t| {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs().to_string())
+    });
 
     #[cfg(not(unix))]
-    let created = metadata
-        .created()
-        .ok()
-        .and_then(|t| {
-            t.duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_secs().to_string())
-        });
+    let created = metadata.created().ok().and_then(|t| {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs().to_string())
+    });
 
     Ok(FileStat {
         path: expanded_path.clone(),

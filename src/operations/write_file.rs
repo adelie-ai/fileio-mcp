@@ -9,7 +9,12 @@ use std::path::Path;
 /// Write content to a file
 pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -32,16 +37,29 @@ pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
             .append(true)
             .open(&expanded_path)
             .map_err(|e| {
-                crate::error::FileIoMcpError::from(FileIoError::from_io_error("open file for appending", &expanded_path, e))
+                crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                    "open file for appending",
+                    &expanded_path,
+                    e,
+                ))
             })?;
 
-        file.write_all(content.as_bytes())
-            .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("write to file", &expanded_path, e)))?;
+        file.write_all(content.as_bytes()).map_err(|e| {
+            crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                "write to file",
+                &expanded_path,
+                e,
+            ))
+        })?;
     } else {
         // Atomic write: write to temp file, then rename
         let temp_path = format!("{}.tmp", expanded_path);
         fs::write(&temp_path, content).map_err(|e| {
-            crate::error::FileIoMcpError::from(FileIoError::from_io_error("write to temp file", &temp_path, e))
+            crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                "write to temp file",
+                &temp_path,
+                e,
+            ))
         })?;
         fs::rename(&temp_path, &expanded_path).map_err(|e| {
             use std::io::ErrorKind;
@@ -52,7 +70,11 @@ pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
                         expanded_path
                     )))
                 }
-                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("rename temp file", &format!("{} to {}", temp_path, expanded_path), e))
+                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                    "rename temp file",
+                    &format!("{} to {}", temp_path, expanded_path),
+                    e,
+                )),
             }
         })?;
     }

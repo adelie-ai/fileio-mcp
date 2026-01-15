@@ -68,11 +68,7 @@ impl McpServer {
     }
 
     /// Handle tool call
-    pub async fn handle_tool_call(
-        &self,
-        tool_name: &str,
-        arguments: &Value,
-    ) -> Result<Value> {
+    pub async fn handle_tool_call(&self, tool_name: &str, arguments: &Value) -> Result<Value> {
         self.tool_registry.execute_tool(tool_name, arguments).await
     }
 

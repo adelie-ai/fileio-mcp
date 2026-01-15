@@ -9,37 +9,60 @@ use std::path::Path;
 /// Get the basename (filename) from a path
 pub fn basename(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}'': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
-    
+
     path_obj
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            FileIoError::InvalidPath(format!("Cannot extract basename from path: {}", expanded_path)).into()
+            FileIoError::InvalidPath(format!(
+                "Cannot extract basename from path: {}",
+                expanded_path
+            ))
+            .into()
         })
 }
 
 /// Get the dirname (directory path) from a path
 pub fn dirname(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}'': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
     path_obj
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| {
-            FileIoError::InvalidPath(format!("Cannot extract dirname from path: {}", expanded_path)).into()
+            FileIoError::InvalidPath(format!(
+                "Cannot extract dirname from path: {}",
+                expanded_path
+            ))
+            .into()
         })
 }
 
 /// Get the real (canonical) path, resolving all symlinks
 pub fn realpath(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}'': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -48,48 +71,63 @@ pub fn realpath(path: &str) -> Result<String> {
     }
 
     let canonical = fs::canonicalize(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("canonicalize path", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "canonicalize path",
+            &expanded_path,
+            e,
+        ))
     })?;
 
-    canonical
-        .to_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            FileIoError::InvalidPath(format!("Path contains invalid UTF-8: {}", canonical.display()))
-                .into()
-        })
+    canonical.to_str().map(|s| s.to_string()).ok_or_else(|| {
+        FileIoError::InvalidPath(format!(
+            "Path contains invalid UTF-8: {}",
+            canonical.display()
+        ))
+        .into()
+    })
 }
 
 /// Read the target of a symbolic link
 pub fn readlink(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}'': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     // Use symlink_metadata so we don't follow the symlink. This lets us
     // observe and read broken symlinks (they may point at non-existent targets).
     let metadata = fs::symlink_metadata(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("lstat path", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "lstat path",
+            &expanded_path,
+            e,
+        ))
     })?;
 
     if !metadata.file_type().is_symlink() {
-        return Err(FileIoError::InvalidPath(format!("{} is not a symbolic link", expanded_path)).into());
+        return Err(
+            FileIoError::InvalidPath(format!("{} is not a symbolic link", expanded_path)).into(),
+        );
     }
 
     let target = fs::read_link(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read symbolic link", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "read symbolic link",
+            &expanded_path,
+            e,
+        ))
     })?;
-    target
-        .to_str()
-        .map(|s: &str| s.to_string())
-        .ok_or_else(|| {
-            FileIoError::InvalidPath(format!(
-                "Symlink target contains invalid UTF-8: {}",
-                target.display()
-            ))
-            .into()
-        })
+    target.to_str().map(|s: &str| s.to_string()).ok_or_else(|| {
+        FileIoError::InvalidPath(format!(
+            "Symlink target contains invalid UTF-8: {}",
+            target.display()
+        ))
+        .into()
+    })
 }
-
 
 #[cfg(test)]
 mod tests {

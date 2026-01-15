@@ -631,32 +631,29 @@ impl ToolRegistry {
     }
 
     /// Execute a tool by name
-    pub async fn execute_tool(
-        &self,
-        name: &str,
-        arguments: &Value,
-    ) -> Result<Value> {
+    pub async fn execute_tool(&self, name: &str, arguments: &Value) -> Result<Value> {
         let args = arguments.as_object().ok_or_else(|| {
             crate::error::McpError::InvalidToolParameters("Arguments must be an object".to_string())
         })?;
 
         match name {
             "fileio_read_lines" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
                 let start_line = Self::parse_optional_u64(args, "start_line")?;
                 let end_line = Self::parse_optional_u64(args, "end_line")?;
                 let line_count = Self::parse_optional_u64(args, "line_count")?;
                 let start_offset = Self::parse_optional_u64(args, "start_offset")?;
 
                 let lines = crate::operations::read_lines::read_lines(
-                    path, start_line, end_line, line_count, start_offset,
+                    path,
+                    start_line,
+                    end_line,
+                    line_count,
+                    start_offset,
                 )?;
 
                 let lines_value = serde_json::to_value(&lines)
@@ -670,14 +667,11 @@ impl ToolRegistry {
                 }))
             }
             "fileio_write_file" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
                 let content = args
                     .get("content")
                     .and_then(|v| v.as_str())
@@ -686,7 +680,10 @@ impl ToolRegistry {
                             "Missing required parameter: content".to_string(),
                         )
                     })?;
-                let append = args.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
+                let append = args
+                    .get("append")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 crate::operations::write_file::write_file(path, content, append)?;
 
@@ -704,14 +701,11 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let mode = args
-                    .get("mode")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: mode".to_string(),
-                        )
-                    })?;
+                let mode = args.get("mode").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: mode".to_string(),
+                    )
+                })?;
 
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 crate::operations::file_mode::set_file_mode(&path_refs, mode)?;
@@ -771,7 +765,8 @@ impl ToolRegistry {
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let stat_results = crate::operations::stat::stat(&path_refs)?;
-                let stat_json_array: Vec<Value> = stat_results.into_iter().map(|s| s.into()).collect();
+                let stat_json_array: Vec<Value> =
+                    stat_results.into_iter().map(|s| s.into()).collect();
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -788,7 +783,10 @@ impl ToolRegistry {
                 })?;
                 let paths = Self::parse_paths(path_value)?;
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(true);
+                let recursive = args
+                    .get("recursive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
 
                 crate::operations::mkdir::mkdir(&path_refs, recursive)?;
 
@@ -800,18 +798,22 @@ impl ToolRegistry {
                 }))
             }
             "fileio_list_directory" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
-                let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
-                let include_hidden = args.get("include_hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let recursive = args
+                    .get("recursive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let include_hidden = args
+                    .get("include_hidden")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
-                let entries = crate::operations::list_dir::list_directory(path, recursive, include_hidden)?;
+                let entries =
+                    crate::operations::list_dir::list_directory(path, recursive, include_hidden)?;
                 let entries_json: Vec<Value> = entries.into_iter().map(|e| e.into()).collect();
 
                 Ok(serde_json::json!({
@@ -831,10 +833,14 @@ impl ToolRegistry {
                         )
                     })?;
                 let root = args.get("root").and_then(|v| v.as_str());
-                let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v as usize);
+                let max_depth = args
+                    .get("max_depth")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
                 let file_type = args.get("file_type").and_then(|v| v.as_str());
 
-                let matches = crate::operations::file_find::file_find(pattern, root, max_depth, file_type)?;
+                let matches =
+                    crate::operations::file_find::file_find(pattern, root, max_depth, file_type)?;
                 let matches_json: Vec<Value> = matches.into_iter().map(|m| m.into()).collect();
 
                 Ok(serde_json::json!({
@@ -853,23 +859,38 @@ impl ToolRegistry {
                             "Missing required parameter: pattern".to_string(),
                         )
                     })?;
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
-                let case_sensitive = args.get("case_sensitive").and_then(|v| v.as_bool()).unwrap_or(true);
-                let use_regex = args.get("use_regex").and_then(|v| v.as_bool()).unwrap_or(false);
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let case_sensitive = args
+                    .get("case_sensitive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let use_regex = args
+                    .get("use_regex")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let max_count = args.get("max_count").and_then(|v| v.as_u64());
-                let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v as usize);
-                let include_hidden = args.get("include_hidden").and_then(|v| v.as_bool()).unwrap_or(false);
+                let max_depth = args
+                    .get("max_depth")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                let include_hidden = args
+                    .get("include_hidden")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let file_glob = args.get("file_glob").and_then(|v| v.as_str());
                 let exclude_glob = args.get("exclude_glob").and_then(|v| v.as_str());
-                let whole_word = args.get("whole_word").and_then(|v| v.as_bool()).unwrap_or(false);
-                let multiline = args.get("multiline").and_then(|v| v.as_bool()).unwrap_or(false);
+                let whole_word = args
+                    .get("whole_word")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let multiline = args
+                    .get("multiline")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 let matches = crate::operations::find_in_files::find_in_files(
                     pattern,
@@ -894,22 +915,16 @@ impl ToolRegistry {
                 }))
             }
             "fileio_patch_file" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
-                let patch = args
-                    .get("patch")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: patch".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
+                let patch = args.get("patch").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: patch".to_string(),
+                    )
+                })?;
                 let format = args.get("format").and_then(|v| v.as_str());
 
                 crate::operations::patch_file::patch_file(path, patch, format)?;
@@ -937,7 +952,10 @@ impl ToolRegistry {
                             "Missing required parameter: destination".to_string(),
                         )
                     })?;
-                let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+                let recursive = args
+                    .get("recursive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 let results = crate::operations::cp::cp(&source_refs, destination, recursive)?;
                 let results_value = serde_json::to_value(&results)
@@ -986,7 +1004,10 @@ impl ToolRegistry {
                 })?;
                 let paths = Self::parse_paths(path_value)?;
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+                let recursive = args
+                    .get("recursive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
                 let results = crate::operations::rm::rm(&path_refs, recursive, force)?;
@@ -1008,7 +1029,10 @@ impl ToolRegistry {
                 })?;
                 let paths = Self::parse_paths(path_value)?;
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
+                let recursive = args
+                    .get("recursive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 let results = crate::operations::rmdir::rmdir(&path_refs, recursive)?;
                 let results_value = serde_json::to_value(&results)
@@ -1022,22 +1046,19 @@ impl ToolRegistry {
                 }))
             }
             "fileio_create_hard_link" => {
-                let target = args
-                    .get("target")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: target".to_string(),
-                        )
-                    })?;
-                let link_path = args
-                    .get("link_path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: link_path".to_string(),
-                        )
-                    })?;
+                let target = args.get("target").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: target".to_string(),
+                    )
+                })?;
+                let link_path =
+                    args.get("link_path")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            crate::error::McpError::InvalidToolParameters(
+                                "Missing required parameter: link_path".to_string(),
+                            )
+                        })?;
 
                 crate::operations::link::hard_link(target, link_path)?;
 
@@ -1049,22 +1070,19 @@ impl ToolRegistry {
                 }))
             }
             "fileio_create_symbolic_link" => {
-                let target = args
-                    .get("target")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: target".to_string(),
-                        )
-                    })?;
-                let link_path = args
-                    .get("link_path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: link_path".to_string(),
-                        )
-                    })?;
+                let target = args.get("target").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: target".to_string(),
+                    )
+                })?;
+                let link_path =
+                    args.get("link_path")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            crate::error::McpError::InvalidToolParameters(
+                                "Missing required parameter: link_path".to_string(),
+                            )
+                        })?;
 
                 crate::operations::link::symlink(target, link_path)?;
 
@@ -1076,14 +1094,11 @@ impl ToolRegistry {
                 }))
             }
             "fileio_get_basename" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
 
                 let basename = crate::operations::path_utils::basename(path)?;
 
@@ -1095,14 +1110,11 @@ impl ToolRegistry {
                 }))
             }
             "fileio_get_dirname" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
 
                 let dirname = crate::operations::path_utils::dirname(path)?;
 
@@ -1114,14 +1126,11 @@ impl ToolRegistry {
                 }))
             }
             "fileio_get_canonical_path" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
 
                 let realpath = crate::operations::path_utils::realpath(path)?;
 
@@ -1133,14 +1142,11 @@ impl ToolRegistry {
                 }))
             }
             "fileio_read_symbolic_link" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: path".to_string(),
-                        )
-                    })?;
+                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: path".to_string(),
+                    )
+                })?;
 
                 let target = crate::operations::path_utils::readlink(path)?;
 
@@ -1152,23 +1158,21 @@ impl ToolRegistry {
                 }))
             }
             "fileio_create_temporary" => {
-                let temp_type = args
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::error::McpError::InvalidToolParameters(
-                            "Missing required parameter: type".to_string(),
-                        )
-                    })?;
+                let temp_type = args.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+                    crate::error::McpError::InvalidToolParameters(
+                        "Missing required parameter: type".to_string(),
+                    )
+                })?;
                 let template = args.get("template").and_then(|v| v.as_str());
 
                 let path = match temp_type {
                     "file" => crate::operations::mktemp::mktemp_file(template)?,
                     "dir" => crate::operations::mktemp::mktemp_dir(template)?,
                     _ => {
-                        return Err(crate::error::McpError::InvalidToolParameters(
-                            format!("Invalid type: {} (must be 'file' or 'dir')", temp_type),
-                        )
+                        return Err(crate::error::McpError::InvalidToolParameters(format!(
+                            "Invalid type: {} (must be 'file' or 'dir')",
+                            temp_type
+                        ))
                         .into());
                     }
                 };

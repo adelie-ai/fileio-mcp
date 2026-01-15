@@ -23,10 +23,9 @@ pub fn get_file_mode(paths: &[&str]) -> Result<std::collections::HashMap<String,
         }
     }
     if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(format!(
-            "Some permission queries failed: {}",
-            errors.join("; ")
-        ))));
+        return Err(crate::error::FileIoMcpError::from(FileIoError::ReadError(
+            format!("Some permission queries failed: {}", errors.join("; ")),
+        )));
     }
     Ok(results)
 }
@@ -34,10 +33,19 @@ pub fn get_file_mode(paths: &[&str]) -> Result<std::collections::HashMap<String,
 /// Get file mode (permissions) as octal string for a single path
 pub fn get_file_mode_single(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let metadata = fs::metadata(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read metadata", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "read metadata",
+            &expanded_path,
+            e,
+        ))
     })?;
 
     #[cfg(unix)]

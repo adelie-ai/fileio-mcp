@@ -15,10 +15,9 @@ pub fn mkdir(paths: &[&str], recursive: bool) -> Result<()> {
         }
     }
     if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
-            "Some directory creations failed: {}",
-            errors.join("; ")
-        ))));
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(
+            format!("Some directory creations failed: {}", errors.join("; ")),
+        )));
     }
     Ok(())
 }
@@ -26,11 +25,20 @@ pub fn mkdir(paths: &[&str], recursive: bool) -> Result<()> {
 /// Create a single directory (with -p equivalent, i.e., create parent directories)
 pub fn mkdir_single(path: &str, recursive: bool) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     if recursive {
         fs::create_dir_all(&expanded_path).map_err(|e| {
-            crate::error::FileIoMcpError::from(FileIoError::from_io_error("create directory", &expanded_path, e))
+            crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                "create directory",
+                &expanded_path,
+                e,
+            ))
         })?;
     } else {
         fs::create_dir(&expanded_path).map_err(|e| {

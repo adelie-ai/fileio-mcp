@@ -67,19 +67,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve {
-            mode,
-            port,
-            host,
-        } => {
+        Commands::Serve { mode, port, host } => {
             // Create server
             let server = McpServer::new();
 
             match mode {
                 TransportMode::Stdio => run_stdio_server(server).await?,
-                TransportMode::Websocket => {
-                    run_websocket_server(server, &host, port).await?
-                }
+                TransportMode::Websocket => run_websocket_server(server, &host, port).await?,
             }
         }
     }
@@ -141,11 +135,7 @@ async fn run_stdio_server(server: McpServer) -> Result<()> {
     Ok(())
 }
 
-async fn run_websocket_server(
-    server: McpServer,
-    host: &str,
-    port: u16,
-) -> Result<()> {
+async fn run_websocket_server(server: McpServer, host: &str, port: u16) -> Result<()> {
     let server = Arc::new(server);
 
     let app = Router::new()
@@ -160,17 +150,11 @@ async fn run_websocket_server(
     Ok(())
 }
 
-async fn websocket_handler(
-    ws: WebSocketUpgrade,
-    State(server): State<Arc<McpServer>>,
-) -> Response {
+async fn websocket_handler(ws: WebSocketUpgrade, State(server): State<Arc<McpServer>>) -> Response {
     ws.on_upgrade(move |socket| handle_websocket_connection(socket, server))
 }
 
-async fn handle_websocket_connection(
-    socket: axum::extract::ws::WebSocket,
-    server: Arc<McpServer>,
-) {
+async fn handle_websocket_connection(socket: axum::extract::ws::WebSocket, server: Arc<McpServer>) {
     use axum::extract::ws::Message;
     use futures_util::{SinkExt, StreamExt};
 
@@ -218,21 +202,13 @@ async fn handle_websocket_connection(
     }
 }
 
-async fn handle_jsonrpc_message(
-    server: Arc<McpServer>,
-    message: Value,
-) -> Option<Value> {
+async fn handle_jsonrpc_message(server: Arc<McpServer>, message: Value) -> Option<Value> {
     // Validate JSON-RPC version (if present)
     if let Some(jsonrpc_version) = message.get("jsonrpc").and_then(|v| v.as_str()) {
         if jsonrpc_version != "2.0" {
             let id = message.get("id").cloned();
             let error_msg = format!("Invalid JSON-RPC version: {}", jsonrpc_version);
-            return Some(jsonrpc_error_response(
-                id,
-                -32600,
-                &error_msg,
-                None,
-            ));
+            return Some(jsonrpc_error_response(id, -32600, &error_msg, None));
         }
     }
 

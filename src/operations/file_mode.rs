@@ -17,10 +17,9 @@ pub fn set_file_mode(paths: &[&str], mode: &str) -> Result<()> {
         }
     }
     if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
-            "Some permission changes failed: {}",
-            errors.join("; ")
-        ))));
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(
+            format!("Some permission changes failed: {}", errors.join("; ")),
+        )));
     }
     Ok(())
 }
@@ -28,11 +27,20 @@ pub fn set_file_mode(paths: &[&str], mode: &str) -> Result<()> {
 /// Set file mode (permissions) for a single path
 pub fn set_file_mode_single(path: &str, mode_value: u32) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
 
     let metadata = fs::metadata(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read metadata", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "read metadata",
+            &expanded_path,
+            e,
+        ))
     })?;
 
     let mut permissions = metadata.permissions();
@@ -46,10 +54,13 @@ pub fn set_file_mode_single(path: &str, mode_value: u32) -> Result<()> {
                     expanded_path, e
                 )))
             }
-            ErrorKind::NotFound => {
-                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("File not found when setting permissions: {}", expanded_path)))
-            }
-            _ => crate::error::FileIoMcpError::from(FileIoError::InvalidMode(format!("Failed to set permissions for {}: {}", expanded_path, e)))
+            ErrorKind::NotFound => crate::error::FileIoMcpError::from(FileIoError::NotFound(
+                format!("File not found when setting permissions: {}", expanded_path),
+            )),
+            _ => crate::error::FileIoMcpError::from(FileIoError::InvalidMode(format!(
+                "Failed to set permissions for {}: {}",
+                expanded_path, e
+            ))),
         }
     })?;
 
@@ -66,8 +77,11 @@ fn parse_mode(mode_str: &str) -> Result<u32> {
     if let Ok(mode) = mode_str.parse::<u32>() {
         // If it looks like octal (starts with 0), parse as octal
         if mode_str.starts_with('0') {
-            return Ok(u32::from_str_radix(mode_str.trim_start_matches('0'), 8)
-                .map_err(|_| FileIoError::InvalidMode(format!("Invalid octal mode: {}", mode_str)))?);
+            return Ok(
+                u32::from_str_radix(mode_str.trim_start_matches('0'), 8).map_err(|_| {
+                    FileIoError::InvalidMode(format!("Invalid octal mode: {}", mode_str))
+                })?,
+            );
         }
         return Ok(mode);
     }

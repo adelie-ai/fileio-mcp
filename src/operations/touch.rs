@@ -18,10 +18,9 @@ pub fn touch(paths: &[&str]) -> Result<()> {
         }
     }
     if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
-            "Some touch operations failed: {}",
-            errors.join("; ")
-        ))));
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(
+            format!("Some touch operations failed: {}", errors.join("; ")),
+        )));
     }
     Ok(())
 }
@@ -29,7 +28,12 @@ pub fn touch(paths: &[&str]) -> Result<()> {
 /// Touch a single file (create if it doesn't exist, update timestamp if it does)
 pub fn touch_single(path: &str) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -38,7 +42,10 @@ pub fn touch_single(path: &str) -> Result<()> {
         let now = SystemTime::now();
         let file_time = FileTime::from_system_time(now);
         set_file_times(&expanded_path, file_time, file_time).map_err(|e| {
-            FileIoError::WriteError(format!("Failed to update timestamp for {}: {}", expanded_path, e))
+            FileIoError::WriteError(format!(
+                "Failed to update timestamp for {}: {}",
+                expanded_path, e
+            ))
         })?;
     } else {
         // Create empty file

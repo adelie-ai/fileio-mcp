@@ -29,7 +29,10 @@ pub fn count_lines(paths: &[&str]) -> Result<Vec<LineCountResult>> {
             }),
             Err(e) => {
                 // Map NotFound to a clear status; other errors include message
-                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                let is_not_found = matches!(
+                    e,
+                    crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_))
+                );
                 let status = if is_not_found {
                     "error: not found".to_string()
                 } else {
@@ -50,7 +53,12 @@ pub fn count_lines(paths: &[&str]) -> Result<Vec<LineCountResult>> {
 /// Count lines in a single file
 pub fn count_lines_single(path: &str) -> Result<u64> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -62,8 +70,13 @@ pub fn count_lines_single(path: &str) -> Result<u64> {
         return Err(FileIoError::InvalidPath(format!("{} is not a file", expanded_path)).into());
     }
 
-    let file = File::open(&expanded_path)
-        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("open file", &expanded_path, e)))?;
+    let file = File::open(&expanded_path).map_err(|e| {
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "open file",
+            &expanded_path,
+            e,
+        ))
+    })?;
 
     let reader = BufReader::new(file);
     let line_count = reader.lines().count() as u64;

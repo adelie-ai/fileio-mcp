@@ -119,15 +119,17 @@ impl FileIoError {
             ErrorKind::NotFound => {
                 FileIoError::NotFound(format!("{} not found: {}", operation, path))
             }
-            ErrorKind::PermissionDenied => {
-                FileIoError::PermissionDenied(format!("Permission denied when {}: {}", operation, path))
-            }
+            ErrorKind::PermissionDenied => FileIoError::PermissionDenied(format!(
+                "Permission denied when {}: {}",
+                operation, path
+            )),
             ErrorKind::AlreadyExists => {
                 FileIoError::WriteError(format!("{} already exists: {}", operation, path))
             }
-            ErrorKind::InvalidInput => {
-                FileIoError::InvalidPath(format!("Invalid input for {}: {} ({})", operation, path, error))
-            }
+            ErrorKind::InvalidInput => FileIoError::InvalidPath(format!(
+                "Invalid input for {}: {} ({})",
+                operation, path, error
+            )),
             _ => {
                 // For other errors, include the original error message
                 FileIoError::WriteError(format!("Failed to {} {}: {}", operation, path, error))

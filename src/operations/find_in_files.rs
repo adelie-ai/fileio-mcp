@@ -32,7 +32,12 @@ pub fn find_in_files(
     multiline: bool,
 ) -> Result<Vec<Match>> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -86,28 +91,31 @@ pub fn find_in_files(
             .map_err(|e| FileIoError::InvalidPath(format!("Invalid file_glob pattern: {}", e)))?;
         let glob_matcher = glob_pattern.compile_matcher();
         walker.filter_entry(move |entry| {
-            entry.path().file_name().and_then(|n| n.to_str()).map_or(false, |name| {
-                glob_matcher.is_match(name)
-            })
+            entry
+                .path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |name| glob_matcher.is_match(name))
         });
     }
 
     if let Some(glob) = exclude_glob {
-        let exclude_pattern = globset::GlobBuilder::new(glob)
-            .build()
-            .map_err(|e| FileIoError::InvalidPath(format!("Invalid exclude_glob pattern: {}", e)))?;
+        let exclude_pattern = globset::GlobBuilder::new(glob).build().map_err(|e| {
+            FileIoError::InvalidPath(format!("Invalid exclude_glob pattern: {}", e))
+        })?;
         let exclude_matcher = exclude_pattern.compile_matcher();
         walker.filter_entry(move |entry| {
-            !entry.path().file_name().and_then(|n| n.to_str()).map_or(false, |name| {
-                exclude_matcher.is_match(name)
-            })
+            !entry
+                .path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |name| exclude_matcher.is_match(name))
         });
     }
 
     for result in walker.build() {
-        let entry = result.map_err(|e| {
-            FileIoError::ReadError(format!("Error walking directory: {}", e))
-        })?;
+        let entry = result
+            .map_err(|e| FileIoError::ReadError(format!("Error walking directory: {}", e)))?;
 
         let entry_path = entry.path();
 
@@ -174,7 +182,10 @@ pub fn find_in_files(
 impl From<Match> for serde_json::Value {
     fn from(m: Match) -> Self {
         let mut obj = serde_json::Map::new();
-        obj.insert("file_path".to_string(), serde_json::Value::String(m.file_path));
+        obj.insert(
+            "file_path".to_string(),
+            serde_json::Value::String(m.file_path),
+        );
         obj.insert(
             "line_number".to_string(),
             serde_json::Value::Number(m.line_number.into()),
@@ -215,17 +226,7 @@ mod tests {
         fs::write(dir.path().join("test.txt"), "hello world\nfoo bar").unwrap();
 
         let matches = find_in_files(
-            "hello",
-            root,
-            true,
-            false,
-            None,
-            None,
-            false,
-            None,
-            None,
-            false,
-            false,
+            "hello", root, true, false, None, None, false, None, None, false, false,
         )
         .unwrap();
 
@@ -242,17 +243,7 @@ mod tests {
         fs::write(dir.path().join("test.txt"), "hello123\nworld456").unwrap();
 
         let matches = find_in_files(
-            r"\d+",
-            root,
-            true,
-            true,
-            None,
-            None,
-            false,
-            None,
-            None,
-            false,
-            false,
+            r"\d+", root, true, true, None, None, false, None, None, false, false,
         )
         .unwrap();
 
@@ -267,17 +258,7 @@ mod tests {
         fs::write(dir.path().join("test.txt"), "Hello World").unwrap();
 
         let matches = find_in_files(
-            "hello",
-            root,
-            false,
-            false,
-            None,
-            None,
-            false,
-            None,
-            None,
-            false,
-            false,
+            "hello", root, false, false, None, None, false, None, None, false, false,
         )
         .unwrap();
 

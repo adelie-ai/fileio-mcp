@@ -8,25 +8,27 @@ use std::fs;
 /// Apply a patch to a file
 pub fn patch_file(path: &str, patch: &str, format: Option<&str>) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path '{}'': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}'': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let format = format.unwrap_or("unified_diff");
 
     match format {
         "unified_diff" => apply_unified_diff(&expanded_path, patch),
         "add_remove_lines" => apply_add_remove_lines(&expanded_path, patch),
-        _ => Err(FileIoError::PatchError(format!(
-            "Unknown patch format: {}",
-            format
-        ))
-        .into()),
+        _ => Err(FileIoError::PatchError(format!("Unknown patch format: {}", format)).into()),
     }
 }
 
 fn apply_unified_diff(path: &str, diff: &str) -> Result<()> {
     // Read current file content
-    let current_content = fs::read_to_string(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", path, e)))?;
+    let current_content = fs::read_to_string(path).map_err(|e| {
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", path, e))
+    })?;
 
     let lines: Vec<&str> = current_content.lines().collect();
     let mut new_lines = Vec::new();
@@ -66,7 +68,11 @@ fn apply_unified_diff(path: &str, diff: &str) -> Result<()> {
     // Write patched content
     let new_content = new_lines.join("\n");
     fs::write(path, new_content).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("write patched file", path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "write patched file",
+            path,
+            e,
+        ))
     })?;
 
     Ok(())
@@ -75,13 +81,13 @@ fn apply_unified_diff(path: &str, diff: &str) -> Result<()> {
 fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
     // Parse JSON patch format
     // Expected format: { "operations": [{"type": "add|remove", "line": number, "content": "..."}] }
-    let patch_data: serde_json::Value = serde_json::from_str(patch_json).map_err(|e| {
-        FileIoError::PatchError(format!("Failed to parse patch JSON: {}", e))
-    })?;
+    let patch_data: serde_json::Value = serde_json::from_str(patch_json)
+        .map_err(|e| FileIoError::PatchError(format!("Failed to parse patch JSON: {}", e)))?;
 
     // Read current file content
-    let current_content = fs::read_to_string(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", path, e)))?;
+    let current_content = fs::read_to_string(path).map_err(|e| {
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", path, e))
+    })?;
 
     let mut lines: Vec<String> = current_content.lines().map(|s| s.to_string()).collect();
 
@@ -96,15 +102,12 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
     // Validate and collect operations, ensuring required fields exist
     let mut sorted_ops: Vec<(&str, usize, &serde_json::Value)> = Vec::new();
     for op in operations {
-        let op_type = op
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| FileIoError::PatchError("Each operation must have a string 'type' field".to_string()))?;
-        let line = op
-            .get("line")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| FileIoError::PatchError("Each operation must have a numeric 'line' field".to_string()))?
-            as usize;
+        let op_type = op.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            FileIoError::PatchError("Each operation must have a string 'type' field".to_string())
+        })?;
+        let line = op.get("line").and_then(|v| v.as_u64()).ok_or_else(|| {
+            FileIoError::PatchError("Each operation must have a numeric 'line' field".to_string())
+        })? as usize;
         sorted_ops.push((op_type, line, op));
     }
     // Sort descending by line number so removals don't affect indices
@@ -123,12 +126,9 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
 
         match op_type {
             "add" => {
-                let content = op
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        FileIoError::PatchError("Add operation must have 'content' field".to_string())
-                    })?;
+                let content = op.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
+                    FileIoError::PatchError("Add operation must have 'content' field".to_string())
+                })?;
                 lines.insert(line_num - 1, content.to_string());
             }
             "remove" => {
@@ -155,12 +155,15 @@ fn apply_add_remove_lines(path: &str, patch_json: &str) -> Result<()> {
     // Write patched content
     let new_content = lines.join("\n");
     fs::write(path, new_content).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("write patched file", path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "write patched file",
+            path,
+            e,
+        ))
     })?;
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

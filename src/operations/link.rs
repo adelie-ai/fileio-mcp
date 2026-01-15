@@ -9,10 +9,20 @@ use std::path::Path;
 /// Create a hard link
 pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
     let expanded_target = shellexpand::full(target)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", target, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                target, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let expanded_link = shellexpand::full(link_path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", link_path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                link_path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let target_path = Path::new(&expanded_target);
 
@@ -41,7 +51,10 @@ pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
                 )))
             }
             ErrorKind::NotFound => {
-                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("Target not found when creating hard link: {}", expanded_target)))
+                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!(
+                    "Target not found when creating hard link: {}",
+                    expanded_target
+                )))
             }
             ErrorKind::AlreadyExists => {
                 crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
@@ -49,7 +62,11 @@ pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
                     expanded_link, expanded_target
                 )))
             }
-            _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("create hard link", &format!("{} to {}", expanded_link, expanded_target), e))
+            _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                "create hard link",
+                &format!("{} to {}", expanded_link, expanded_target),
+                e,
+            )),
         }
     })?;
 
@@ -59,7 +76,12 @@ pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
 /// Create a symbolic link
 pub fn symlink(target: &str, link_path: &str) -> Result<()> {
     let expanded_link = shellexpand::full(link_path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", link_path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                link_path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
 
     // Create parent directories if needed
@@ -82,7 +104,7 @@ pub fn symlink(target: &str, link_path: &str) -> Result<()> {
                 ErrorKind::PermissionDenied => {
                     crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
                         "Permission denied when creating symbolic link {} to {}: {}",
-                expanded_link, target, e
+                        expanded_link, target, e
                     )))
                 }
                 ErrorKind::AlreadyExists => {
@@ -91,7 +113,11 @@ pub fn symlink(target: &str, link_path: &str) -> Result<()> {
                         expanded_link, target
                     )))
                 }
-                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("create symbolic link", &format!("{} to {}", expanded_link, target), e))
+                _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                    "create symbolic link",
+                    &format!("{} to {}", expanded_link, target),
+                    e,
+                )),
             }
         })?;
     }

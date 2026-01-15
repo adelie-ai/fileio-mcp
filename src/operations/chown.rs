@@ -15,10 +15,9 @@ pub fn chown(paths: &[&str], user: Option<&str>, group: Option<&str>) -> Result<
         }
     }
     if !errors.is_empty() {
-        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(format!(
-            "Some ownership changes failed: {}",
-            errors.join("; ")
-        ))));
+        return Err(crate::error::FileIoMcpError::from(FileIoError::WriteError(
+            format!("Some ownership changes failed: {}", errors.join("; ")),
+        )));
     }
     Ok(())
 }
@@ -26,7 +25,12 @@ pub fn chown(paths: &[&str], user: Option<&str>, group: Option<&str>) -> Result<
 /// Change a single file or directory ownership
 pub fn chown_single(path: &str, user: Option<&str>, group: Option<&str>) -> Result<()> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::InvalidPath(format!("Failed to expand path '{}': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -74,13 +78,19 @@ pub fn chown_single(path: &str, user: Option<&str>, group: Option<&str>) -> Resu
         nix::unistd::chown(path_obj, uid, gid).map_err(|e| {
             let error_msg = format!("Failed to change ownership of {}: {}", expanded_path, e);
             // Check if it's a permission error by checking the error string
-            if error_msg.contains("Permission denied") || error_msg.contains("EPERM") || error_msg.contains("EACCES") {
+            if error_msg.contains("Permission denied")
+                || error_msg.contains("EPERM")
+                || error_msg.contains("EACCES")
+            {
                 crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
                     "Permission denied when changing ownership of {}: {}",
                     expanded_path, e
                 )))
             } else if error_msg.contains("ENOENT") || error_msg.contains("No such file") {
-                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!("Path not found when changing ownership: {}", expanded_path)))
+                crate::error::FileIoMcpError::from(FileIoError::NotFound(format!(
+                    "Path not found when changing ownership: {}",
+                    expanded_path
+                )))
             } else {
                 crate::error::FileIoMcpError::from(FileIoError::WriteError(error_msg))
             }
@@ -115,6 +125,11 @@ mod tests {
         let gid = getgid();
 
         // Change ownership to current user (should succeed)
-        chown(&[path], Some(&uid.as_raw().to_string()), Some(&gid.as_raw().to_string())).unwrap();
+        chown(
+            &[path],
+            Some(&uid.as_raw().to_string()),
+            Some(&gid.as_raw().to_string()),
+        )
+        .unwrap();
     }
 }

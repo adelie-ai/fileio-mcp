@@ -17,13 +17,14 @@ pub struct DirEntry {
 }
 
 /// List directory contents
-pub fn list_directory(
-    path: &str,
-    recursive: bool,
-    include_hidden: bool,
-) -> Result<Vec<DirEntry>> {
+pub fn list_directory(path: &str, recursive: bool, include_hidden: bool) -> Result<Vec<DirEntry>> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -33,7 +34,9 @@ pub fn list_directory(
     }
 
     if !path_obj.is_dir() {
-        return Err(FileIoError::InvalidPath(format!("{} is not a directory", expanded_path)).into());
+        return Err(
+            FileIoError::InvalidPath(format!("{} is not a directory", expanded_path)).into(),
+        );
     }
 
     let mut entries = Vec::new();
@@ -47,11 +50,7 @@ pub fn list_directory(
     Ok(entries)
 }
 
-fn collect_entries(
-    dir: &Path,
-    entries: &mut Vec<DirEntry>,
-    include_hidden: bool,
-) -> Result<()> {
+fn collect_entries(dir: &Path, entries: &mut Vec<DirEntry>, include_hidden: bool) -> Result<()> {
     let dir_entries = fs::read_dir(dir).map_err(|e| {
         FileIoError::ReadError(format!("Failed to read directory {}: {}", dir.display(), e))
     })?;
@@ -74,7 +73,11 @@ fn collect_entries(
         }
 
         let metadata = entry.metadata().map_err(|e| {
-            FileIoError::ReadError(format!("Failed to read metadata for {}: {}", path.display(), e))
+            FileIoError::ReadError(format!(
+                "Failed to read metadata for {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
         let entry_type = if path.is_dir() {
@@ -94,14 +97,11 @@ fn collect_entries(
             None
         };
 
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .map(|d| d.as_secs().to_string())
-            });
+        let modified = metadata.modified().ok().and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs().to_string())
+        });
 
         entries.push(DirEntry {
             name,

@@ -15,10 +15,20 @@ pub fn read_lines(
     start_offset: Option<u64>,
 ) -> Result<Vec<String>> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
-    let file = File::open(&expanded_path)
-        .map_err(|e| crate::error::FileIoMcpError::from(FileIoError::from_io_error("open file", &expanded_path, e)))?;
+    let file = File::open(&expanded_path).map_err(|e| {
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "open file",
+            &expanded_path,
+            e,
+        ))
+    })?;
 
     let reader = BufReader::new(file);
     let lines: Vec<String> = reader
@@ -34,10 +44,9 @@ pub fn read_lines(
     // Determine the range of lines to return
     let start = if let Some(start) = start_line {
         if start == 0 {
-            return Err(FileIoError::InvalidLineNumbers(
-                "Line numbers start at 1".to_string(),
-            )
-            .into());
+            return Err(
+                FileIoError::InvalidLineNumbers("Line numbers start at 1".to_string()).into(),
+            );
         }
         (start - 1) as usize
     } else if let Some(offset) = start_offset {
@@ -48,10 +57,9 @@ pub fn read_lines(
 
     let end = if let Some(end) = end_line {
         if end == 0 {
-            return Err(FileIoError::InvalidLineNumbers(
-                "Line numbers start at 1".to_string(),
-            )
-            .into());
+            return Err(
+                FileIoError::InvalidLineNumbers("Line numbers start at 1".to_string()).into(),
+            );
         }
         if end < start_line.unwrap_or(1) {
             return Err(FileIoError::InvalidLineNumbers(
@@ -79,10 +87,9 @@ pub fn read_lines(
     let end = end.min(lines.len());
 
     if start > end {
-        return Err(FileIoError::InvalidLineNumbers(
-            "start_line must be <= end_line".to_string(),
-        )
-        .into());
+        return Err(
+            FileIoError::InvalidLineNumbers("start_line must be <= end_line".to_string()).into(),
+        );
     }
 
     Ok(lines[start..end].to_vec())

@@ -27,7 +27,10 @@ pub fn count_words(paths: &[&str]) -> Result<Vec<WordCountResult>> {
                 exists: true,
             }),
             Err(e) => {
-                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
+                let is_not_found = matches!(
+                    e,
+                    crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_))
+                );
                 let status = if is_not_found {
                     "error: not found".to_string()
                 } else {
@@ -48,7 +51,12 @@ pub fn count_words(paths: &[&str]) -> Result<Vec<WordCountResult>> {
 /// Count words in a single file (whitespace-separated)
 pub fn count_words_single(path: &str) -> Result<u64> {
     let expanded_path = shellexpand::full(path)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", path, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                path, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path_obj = Path::new(&expanded_path);
 
@@ -61,7 +69,11 @@ pub fn count_words_single(path: &str) -> Result<u64> {
     }
 
     let content = fs::read_to_string(&expanded_path).map_err(|e| {
-        crate::error::FileIoMcpError::from(FileIoError::from_io_error("read file", &expanded_path, e))
+        crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+            "read file",
+            &expanded_path,
+            e,
+        ))
     })?;
 
     let word_count = content.split_whitespace().count() as u64;

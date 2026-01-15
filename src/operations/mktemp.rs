@@ -11,8 +11,13 @@ pub fn mktemp_file(template: Option<&str>) -> Result<String> {
     if let Some(tmpl) = template {
         // If template provided, create in specified directory
         let expanded_tmpl = shellexpand::full(tmpl)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", tmpl, e))))
-        .map(|expanded| expanded.into_owned())?;
+            .map_err(|e| {
+                crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                    "Failed to expand path \'{}\': {}",
+                    tmpl, e
+                )))
+            })
+            .map(|expanded| expanded.into_owned())?;
         let path = Path::new(&expanded_tmpl);
         let parent = path.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent).map_err(|e| {
@@ -46,8 +51,13 @@ pub fn mktemp_dir(template: Option<&str>) -> Result<String> {
     if let Some(tmpl) = template {
         // If template provided, create in specified directory
         let expanded_tmpl = shellexpand::full(tmpl)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", tmpl, e))))
-        .map(|expanded| expanded.into_owned())?;
+            .map_err(|e| {
+                crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                    "Failed to expand path \'{}\': {}",
+                    tmpl, e
+                )))
+            })
+            .map(|expanded| expanded.into_owned())?;
         let path = Path::new(&expanded_tmpl);
         let parent = path.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent).map_err(|e| {

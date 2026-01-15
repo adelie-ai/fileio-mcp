@@ -15,26 +15,42 @@ fn is_glob_pattern(s: &str) -> bool {
 /// Expand glob pattern to matching paths
 fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
     let expanded_pattern = shellexpand::full(pattern)
-        .map_err(|e| crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!("Failed to expand path \'{}\': {}", pattern, e))))
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                pattern, e
+            )))
+        })
         .map(|expanded| expanded.into_owned())?;
     let path = Path::new(&expanded_pattern);
     let (base_dir, glob_str) = if let Some(parent) = path.parent() {
         if parent.as_os_str().is_empty() {
-            (Path::new("."), path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern))
+            (
+                Path::new("."),
+                path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern),
+            )
         } else {
-            (parent, path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern))
+            (
+                parent,
+                path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern),
+            )
         }
     } else {
         (Path::new("."), pattern)
     };
 
-    let glob = Glob::new(glob_str)
-        .map_err(|e| FileIoError::InvalidPath(format!("Invalid glob pattern {}: {}", pattern, e)))?;
+    let glob = Glob::new(glob_str).map_err(|e| {
+        FileIoError::InvalidPath(format!("Invalid glob pattern {}: {}", pattern, e))
+    })?;
     let matcher: GlobMatcher = glob.compile_matcher();
 
     let mut matches = Vec::new();
     let entries = fs::read_dir(base_dir).map_err(|e| {
-        FileIoError::ReadError(format!("Failed to read directory {}: {}", base_dir.display(), e))
+        FileIoError::ReadError(format!(
+            "Failed to read directory {}: {}",
+            base_dir.display(),
+            e
+        ))
     })?;
 
     for entry in entries {
@@ -60,11 +76,13 @@ pub fn rm(paths: &[&str], recursive: bool, force: bool) -> Result<Vec<super::mv:
         // Check if path contains glob patterns
         if is_glob_pattern(path) {
             // Expand glob and add matches
-            let matches = expand_glob(path)?; 
+            let matches = expand_glob(path)?;
 
             if matches.is_empty() {
                 if !force {
-                    return Err(FileIoError::NotFound(format!("No files match pattern: {}", path)).into());
+                    return Err(
+                        FileIoError::NotFound(format!("No files match pattern: {}", path)).into(),
+                    );
                 }
             } else {
                 for match_path in matches {
@@ -81,10 +99,21 @@ pub fn rm(paths: &[&str], recursive: bool, force: bool) -> Result<Vec<super::mv:
     let mut results = Vec::new();
     for path in &all_paths {
         match rm_single(path, recursive, force) {
-            Ok(()) => results.push(super::mv::OpResult { path: path.clone(), status: "ok".to_string(), exists: true }),
+            Ok(()) => results.push(super::mv::OpResult {
+                path: path.clone(),
+                status: "ok".to_string(),
+                exists: true,
+            }),
             Err(e) => {
-                let is_not_found = matches!(e, crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_)));
-                results.push(super::mv::OpResult { path: path.clone(), status: format!("error: {}", e), exists: !is_not_found });
+                let is_not_found = matches!(
+                    e,
+                    crate::error::FileIoMcpError::FileIo(crate::error::FileIoError::NotFound(_))
+                );
+                results.push(super::mv::OpResult {
+                    path: path.clone(),
+                    status: format!("error: {}", e),
+                    exists: !is_not_found,
+                });
             }
         }
     }
@@ -112,13 +141,16 @@ fn rm_single(path: &str, recursive: bool, force: bool) -> Result<()> {
             fs::remove_dir_all(path).map_err(|e| {
                 use std::io::ErrorKind;
                 match e.kind() {
-                    ErrorKind::PermissionDenied => {
-                        FileIoError::PermissionDenied(format!(
-                            "Permission denied when removing directory: {}",
-                            path
-                        )).into()
-                    }
-                    _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error("remove directory", path, e))
+                    ErrorKind::PermissionDenied => FileIoError::PermissionDenied(format!(
+                        "Permission denied when removing directory: {}",
+                        path
+                    ))
+                    .into(),
+                    _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                        "remove directory",
+                        path,
+                        e,
+                    )),
                 }
             })?;
         } else {
