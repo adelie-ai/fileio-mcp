@@ -1,31 +1,28 @@
 # Testing (fileio-mcp)
 
-This repo uses a Python-based MCP integration test harness that spawns the server in stdio mode and exercises the MCP tools end-to-end.
+This repo uses Rust MCP integration tests that spawn the server in stdio mode and exercise the MCP tools end-to-end.
 
 ## Source of truth
 
-- Test runner: `scripts/test_fileio_tools.py`
+- Test runner: `cargo test`
+- Source of truth suite: `tests/mcp_stdio_suite.rs`
 - Test workspace: created as a temporary directory at runtime
 
-## Rust integration tests
+## MCP stdio integration tests
 
-There is also a Rust integration test suite that speaks MCP JSON-RPC over stdio:
-
-- Rust suite: `tests/mcp_stdio_suite.rs`
-
-This suite spawns `fileio-mcp serve --mode stdio`, performs MCP initialization, and exercises a representative set of tools end-to-end.
+The integration suite in `tests/mcp_stdio_suite.rs` spawns `fileio-mcp serve --mode stdio`, performs MCP initialization, and exercises tools end-to-end over JSON-RPC.
 
 The harness is intentionally **one tool call per test**:
-1) Python sets up preconditions (files/dirs/links)
+1) Rust sets up preconditions (files/dirs/links)
 2) Exactly one MCP `tools/call` is performed
-3) Python validates just that tool call’s return shape and/or filesystem side effects
+3) Rust validates just that tool call’s return shape and/or filesystem side effects
 
 ## Important: run tests in Docker
 
 The supported way to run tests is inside a Docker container to ensure:
 - consistent OS/filesystem behavior
 - consistent permissions/umask
-- consistent tool availability (Rust/Python)
+- consistent tool availability (Rust)
 
 Local host runs may work, but are not considered the primary or reproducible path.
 
@@ -52,12 +49,6 @@ just test
 Local (not the primary supported path):
 
 ```bash
-./.venv/bin/python -u scripts/test_fileio_tools.py
-```
-
-Rust-only (no Python):
-
-```bash
 cargo test
 ```
 
@@ -68,14 +59,9 @@ Environment toggles:
 
 ## Expected output
 
-- Prints a per-test PASS/FAIL/SKIP line
-- Exits with code `0` on success, `1` if any tests fail
+- Standard `cargo test` output
+- Exits with code `0` on success, `101` if any tests fail
 
 ## Troubleshooting
-
-- If the harness can’t find a server binary, it tries (in order):
-  1) `target/debug/fileio-mcp`
-  2) `fileio-mcp` on `PATH`
-  3) `cargo run -- --mode stdio`
 - If you see JSON-RPC “Server not initialized”, the server did not receive `initialize`/`initialized`.
 - If you see tool parameter shape errors, prefer matching the current Rust implementation (some schemas may be more permissive than the actual parser).

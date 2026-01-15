@@ -171,6 +171,10 @@ fn dangerous_enabled() -> bool {
     running_in_container()
 }
 
+fn keep_test_dir_enabled() -> bool {
+    std::env::var("KEEP_TEST_DIR").ok().as_deref() == Some("1")
+}
+
 fn expect_err_contains<T>(res: Result<T, String>, needle: &str) {
     match res {
         Ok(_) => panic!("expected error containing '{needle}', but call succeeded"),
@@ -194,24 +198,31 @@ fn case_dir(root: &TempDir, name: &str) -> PathBuf {
         }
     }
 
-    tempfile::Builder::new()
-        .prefix(&format!("{safe}_"))
-        .tempdir_in(root.path())
-        .expect("create case dir")
-        .keep()
+    let dir = root.path().join(safe);
+    fs::create_dir_all(&dir).expect("create case dir");
+    dir
 }
 
-#[test]
-fn mcp_stdio_integration_suite() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+fn run_case(test_name: &str, f: impl FnOnce(&mut McpStdioClient, &TempDir)) {
     let test_root = TempDir::new().expect("create temp root");
-
     let mut client = McpStdioClient::start();
     client.initialize();
+    f(&mut client, &test_root);
 
-    // write_file
-    {
-        let case = case_dir(&test_root, "write_file");
+    if keep_test_dir_enabled() {
+        let kept = test_root.keep();
+        eprintln!("KEEP_TEST_DIR=1: kept test dir for {test_name}: {}", kept.display());
+    }
+}
+
+// -----------------
+// End-to-end MCP stdio parity suite
+// -----------------
+
+#[test]
+fn fileio_write_file_overwrite() {
+    run_case("fileio_write_file_overwrite", |client, root| {
+        let case = case_dir(root, "fileio_write_file_overwrite");
         let path = case.join("nested/out.txt");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
 
@@ -223,11 +234,31 @@ fn mcp_stdio_integration_suite() {
             .unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "hello\n");
-    }
+    });
+}
 
-    // read_lines (happy path + edge cases)
-    {
-        let case = case_dir(&test_root, "read_lines");
+#[test]
+fn fileio_write_file_append() {
+    run_case("fileio_write_file_append", |client, root| {
+        let case = case_dir(root, "fileio_write_file_append");
+        let path = case.join("append.txt");
+        fs::write(&path, "hello").unwrap();
+
+        client
+            .tool_call(
+                "fileio_write_file",
+                json!({"path": path.to_string_lossy(), "content":" world", "append":true}),
+            )
+            .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "hello world");
+    });
+}
+
+#[test]
+fn fileio_read_lines_ok() {
+    run_case("fileio_read_lines_ok", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_ok");
         let path = case.join("in.txt");
         fs::write(&path, "a\nb\nc\n").unwrap();
 
@@ -235,6 +266,80 @@ fn mcp_stdio_integration_suite() {
             .tool_call("fileio_read_lines", json!({"path": path.to_string_lossy()}))
             .unwrap();
         assert_eq!(extract_value(&res), json!(["a", "b", "c"]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_range() {
+    run_case("fileio_read_lines_range", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_range");
+        let path = case.join("in.txt");
+        fs::write(&path, "l1\nl2\nl3\nl4\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_read_lines",
+                json!({"path": path.to_string_lossy(), "start_line": 2, "end_line": 3}),
+            )
+            .unwrap();
+        assert_eq!(extract_value(&res), json!(["l2", "l3"]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_line_count() {
+    run_case("fileio_read_lines_line_count", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_line_count");
+        let path = case.join("in.txt");
+        fs::write(&path, "l1\nl2\nl3\nl4\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_read_lines",
+                json!({"path": path.to_string_lossy(), "start_line": 2, "line_count": 2}),
+            )
+            .unwrap();
+        assert_eq!(extract_value(&res), json!(["l2", "l3"]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_start_offset() {
+    run_case("fileio_read_lines_start_offset", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_start_offset");
+        let path = case.join("in.txt");
+        fs::write(&path, "l1\nl2\nl3\nl4\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_read_lines",
+                json!({"path": path.to_string_lossy(), "start_offset": 1, "line_count": 2}),
+            )
+            .unwrap();
+        assert_eq!(extract_value(&res), json!(["l2", "l3"]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_empty_file_returns_empty() {
+    run_case("fileio_read_lines_empty_file_returns_empty", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_empty_file_returns_empty");
+        let path = case.join("empty.txt");
+        fs::write(&path, "").unwrap();
+
+        let res = client
+            .tool_call("fileio_read_lines", json!({"path": path.to_string_lossy()}))
+            .unwrap();
+        assert_eq!(extract_value(&res), json!([]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_end_past_eof_clamps_end_line() {
+    run_case("fileio_read_lines_end_past_eof_clamps_end_line", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_end_past_eof_clamps_end_line");
+        let path = case.join("in.txt");
+        fs::write(&path, "a\nb\nc\n").unwrap();
 
         let res = client
             .tool_call(
@@ -243,39 +348,563 @@ fn mcp_stdio_integration_suite() {
             )
             .unwrap();
         assert_eq!(extract_value(&res), json!(["b", "c"]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_end_past_eof_clamps_line_count() {
+    run_case("fileio_read_lines_end_past_eof_clamps_line_count", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_end_past_eof_clamps_line_count");
+        let path = case.join("in.txt");
+        fs::write(&path, "a\nb\nc\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_read_lines",
+                json!({"path": path.to_string_lossy(), "start_line": 2, "line_count": 999}),
+            )
+            .unwrap();
+        assert_eq!(extract_value(&res), json!(["b", "c"]));
+    });
+}
+
+#[test]
+fn fileio_read_lines_start_line_beyond_eof_errors() {
+    run_case("fileio_read_lines_start_line_beyond_eof_errors", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_start_line_beyond_eof_errors");
+        let path = case.join("in.txt");
+        fs::write(&path, "a\nb\n").unwrap();
+
+        let res = client.tool_call(
+            "fileio_read_lines",
+            json!({"path": path.to_string_lossy(), "start_line": 5}),
+        );
+        expect_err_contains(res, "exceeds");
+    });
+}
+
+#[test]
+fn fileio_read_lines_end_before_start_errors() {
+    run_case("fileio_read_lines_end_before_start_errors", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_end_before_start_errors");
+        let path = case.join("in.txt");
+        fs::write(&path, "a\nb\n").unwrap();
 
         let res = client.tool_call(
             "fileio_read_lines",
             json!({"path": path.to_string_lossy(), "start_line": 2, "end_line": 1}),
         );
         expect_err_contains(res, "end_line");
+    });
+}
+
+#[test]
+fn fileio_read_lines_negative_numbers_rejected() {
+    run_case("fileio_read_lines_negative_numbers_rejected", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_negative_numbers_rejected");
+        let path = case.join("in.txt");
+        fs::write(&path, "a\n").unwrap();
 
         let res = client.tool_call(
             "fileio_read_lines",
             json!({"path": path.to_string_lossy(), "start_line": -1}),
         );
         expect_err_contains(res, "non-negative");
-    }
+    });
+}
 
-    // patch_file (both formats)
-    {
-        let case = case_dir(&test_root, "patch_file");
+#[test]
+fn fileio_read_lines_missing_errors() {
+    run_case("fileio_read_lines_missing_errors", |client, root| {
+        let case = case_dir(root, "fileio_read_lines_missing_errors");
+        let missing = case.join("missing.txt");
+
+        let res = client.tool_call("fileio_read_lines", json!({"path": missing.to_string_lossy()}));
+        expect_err_contains(res, "not found");
+    });
+}
+
+#[test]
+fn fileio_set_permissions() {
+    run_case("fileio_set_permissions", |client, root| {
+        let case = case_dir(root, "fileio_set_permissions");
+        let path = case.join("perm.txt");
+        fs::write(&path, "x").unwrap();
+
+        client
+            .tool_call(
+                "fileio_set_permissions",
+                json!({"path": [path.to_string_lossy()], "mode":"700"}),
+            )
+            .unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(mode.mode() & 0o777, 0o700);
+        }
+    });
+}
+
+#[test]
+fn fileio_set_permissions_multiple_paths() {
+    run_case("fileio_set_permissions_multiple_paths", |client, root| {
+        let case = case_dir(root, "fileio_set_permissions_multiple_paths");
+        let a = case.join("a.txt");
+        let b = case.join("b.txt");
+        fs::write(&a, "x").unwrap();
+        fs::write(&b, "y").unwrap();
+
+        client
+            .tool_call(
+                "fileio_set_permissions",
+                json!({"path": [a.to_string_lossy(), b.to_string_lossy()], "mode":"600"}),
+            )
+            .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(fs::metadata(&b).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    });
+}
+
+#[test]
+fn fileio_set_mode_alias() {
+    run_case("fileio_set_mode_alias", |client, root| {
+        let case = case_dir(root, "fileio_set_mode_alias");
+        let path = case.join("perm2.txt");
+        fs::write(&path, "x").unwrap();
+
+        client
+            .tool_call(
+                "fileio_set_mode",
+                json!({"path": [path.to_string_lossy()], "mode":"644"}),
+            )
+            .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o644);
+        }
+    });
+}
+
+#[test]
+fn fileio_get_permissions() {
+    run_case("fileio_get_permissions", |client, root| {
+        let case = case_dir(root, "fileio_get_permissions");
+        let path = case.join("perm.txt");
+        fs::write(&path, "x").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let res = client
+            .tool_call(
+                "fileio_get_permissions",
+                json!({"path": [path.to_string_lossy()]}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+
+        let mode = if let Some(map) = v.as_object() {
+            map.get(path.to_string_lossy().as_ref())
+                .and_then(|m| m.as_str())
+                .unwrap()
+                .to_string()
+        } else if let Some(arr) = v.as_array() {
+            arr.get(0)
+                .and_then(|x| x.as_object())
+                .and_then(|o| o.get("mode"))
+                .and_then(|m| m.as_str())
+                .unwrap()
+                .to_string()
+        } else {
+            panic!("unexpected get_permissions payload: {v}");
+        };
+
+        assert!(mode.ends_with("755"), "expected 755-ish, got: {mode}");
+    });
+}
+
+#[test]
+fn fileio_get_permissions_multiple_paths() {
+    run_case("fileio_get_permissions_multiple_paths", |client, root| {
+        let case = case_dir(root, "fileio_get_permissions_multiple_paths");
+        let a = case.join("a.txt");
+        let b = case.join("b.txt");
+        fs::write(&a, "x").unwrap();
+        fs::write(&b, "y").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&a, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&b, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        let res = client
+            .tool_call(
+                "fileio_get_permissions",
+                json!({"path": [a.to_string_lossy(), b.to_string_lossy()]}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let map = v.as_object().expect("expected mapping");
+        assert!(
+            map.get(a.to_string_lossy().as_ref())
+                .and_then(|m| m.as_str())
+                .unwrap()
+                .ends_with("700")
+        );
+        assert!(
+            map.get(b.to_string_lossy().as_ref())
+                .and_then(|m| m.as_str())
+                .unwrap()
+                .ends_with("644")
+        );
+    });
+}
+
+#[test]
+fn fileio_touch() {
+    run_case("fileio_touch", |client, root| {
+        let case = case_dir(root, "fileio_touch");
+        let path = case.join("touched.txt");
+        let _ = fs::remove_file(&path);
+
+        client
+            .tool_call("fileio_touch", json!({"path": [path.to_string_lossy()]}))
+            .unwrap();
+        assert!(path.exists());
+    });
+}
+
+#[test]
+fn fileio_stat() {
+    run_case("fileio_stat", |client, root| {
+        let case = case_dir(root, "fileio_stat");
+        let exists = case.join("a.txt");
+        fs::write(&exists, "hello").unwrap();
+        let missing = case.join("missing.txt");
+        let _ = fs::remove_file(&missing);
+
+        let res = client
+            .tool_call(
+                "fileio_stat",
+                json!({"path": [exists.to_string_lossy(), missing.to_string_lossy()]}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("expected stat array");
+        let mut by_path = std::collections::HashMap::new();
+        for entry in arr {
+            let obj = entry.as_object().expect("stat entry object");
+            let p = obj.get("path").and_then(|x| x.as_str()).unwrap().to_string();
+            by_path.insert(p, obj.clone());
+        }
+
+        assert_eq!(
+            by_path
+                .get(exists.to_string_lossy().as_ref())
+                .and_then(|o| o.get("exists"))
+                .and_then(|x| x.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            by_path
+                .get(missing.to_string_lossy().as_ref())
+                .and_then(|o| o.get("exists"))
+                .and_then(|x| x.as_bool()),
+            Some(false)
+        );
+    });
+}
+
+#[test]
+fn fileio_make_directory() {
+    run_case("fileio_make_directory", |client, root| {
+        let case = case_dir(root, "fileio_make_directory");
+        let target = case.join("a/b/c");
+
+        client
+            .tool_call(
+                "fileio_make_directory",
+                json!({"path": [target.to_string_lossy()], "recursive": true}),
+            )
+            .unwrap();
+        assert!(target.is_dir());
+    });
+}
+
+#[test]
+fn fileio_make_directory_non_recursive_errors() {
+    run_case("fileio_make_directory_non_recursive_errors", |client, root| {
+        let case = case_dir(root, "fileio_make_directory_non_recursive_errors");
+        let target = case.join("missing_parent/child");
+
+        let res = client.tool_call(
+            "fileio_make_directory",
+            json!({"path": [target.to_string_lossy()], "recursive": false}),
+        );
+        expect_err_contains(res, "Some directory creations failed");
+    });
+}
+
+#[test]
+fn fileio_list_directory() {
+    run_case("fileio_list_directory", |client, root| {
+        let case = case_dir(root, "fileio_list_directory");
+        fs::write(case.join("f1.txt"), "x").unwrap();
+        fs::create_dir_all(case.join("sub")).unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_list_directory",
+                json!({"path": case.to_string_lossy(), "recursive": false, "include_hidden": false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("list_directory array");
+        let mut names = std::collections::HashSet::new();
+        for entry in arr {
+            if let Some(name) = entry.get("name").and_then(|x| x.as_str()) {
+                names.insert(name.to_string());
+            }
+        }
+        assert!(names.contains("f1.txt"));
+        assert!(names.contains("sub"));
+    });
+}
+
+#[test]
+fn fileio_list_directory_recursive() {
+    run_case("fileio_list_directory_recursive", |client, root| {
+        let case = case_dir(root, "fileio_list_directory_recursive");
+        fs::create_dir_all(case.join("sub")).unwrap();
+        let nested = case.join("sub/nested.txt");
+        fs::write(&nested, "x").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_list_directory",
+                json!({"path": case.to_string_lossy(), "recursive": true, "include_hidden": false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("list_directory array");
+        let mut paths = std::collections::HashSet::new();
+        for entry in arr {
+            if let Some(p) = entry.get("path").and_then(|x| x.as_str()) {
+                paths.insert(p.to_string());
+            }
+        }
+        assert!(paths.contains(nested.to_string_lossy().as_ref()));
+    });
+}
+
+#[test]
+fn fileio_list_directory_include_hidden() {
+    run_case("fileio_list_directory_include_hidden", |client, root| {
+        let case = case_dir(root, "fileio_list_directory_include_hidden");
+        fs::write(case.join(".hidden"), "x").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_list_directory",
+                json!({"path": case.to_string_lossy(), "recursive": false, "include_hidden": true}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("list_directory array");
+        let mut names = std::collections::HashSet::new();
+        for entry in arr {
+            if let Some(name) = entry.get("name").and_then(|x| x.as_str()) {
+                names.insert(name.to_string());
+            }
+        }
+        assert!(names.contains(".hidden"));
+    });
+}
+
+#[test]
+fn fileio_list_directory_missing_returns_empty() {
+    run_case("fileio_list_directory_missing_returns_empty", |client, root| {
+        let case = case_dir(root, "fileio_list_directory_missing_returns_empty");
+        let missing_dir = case.join("missing");
+        let _ = fs::remove_dir_all(&missing_dir);
+
+        let res = client
+            .tool_call(
+                "fileio_list_directory",
+                json!({"path": missing_dir.to_string_lossy(), "recursive": false, "include_hidden": false}),
+            )
+            .unwrap();
+        assert_eq!(extract_value(&res), json!([]));
+    });
+}
+
+#[test]
+fn fileio_find_files() {
+    run_case("fileio_find_files", |client, root| {
+        let case = case_dir(root, "fileio_find_files");
+        fs::write(case.join("a.log"), "x").unwrap();
+        fs::write(case.join("b.log"), "x").unwrap();
+        fs::write(case.join("c.txt"), "x").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_files",
+                json!({"root": case.to_string_lossy(), "pattern": "*.log"}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_files array");
+        let found: std::collections::HashSet<String> = arr
+            .iter()
+            .filter_map(|p| p.as_str())
+            .filter_map(|p| Path::new(p).file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+            .collect();
+        assert!(found.contains("a.log"));
+        assert!(found.contains("b.log"));
+    });
+}
+
+#[test]
+fn fileio_find_files_file_type_dir() {
+    run_case("fileio_find_files_file_type_dir", |client, root| {
+        let case = case_dir(root, "fileio_find_files_file_type_dir");
+        let d = case.join("matchdir");
+        fs::create_dir_all(&d).unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_files",
+                json!({"root": case.to_string_lossy(), "pattern":"matchdir", "file_type":"dir"}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_files array");
+        assert!(arr.iter().any(|p| {
+            p.as_str()
+                .and_then(|s| Path::new(s).file_name().and_then(|n| n.to_str()))
+                == Some("matchdir")
+        }));
+    });
+}
+
+#[test]
+fn fileio_find_files_missing_root_errors() {
+    run_case("fileio_find_files_missing_root_errors", |client, root| {
+        let case = case_dir(root, "fileio_find_files_missing_root_errors");
+        let missing = case.join("nope");
+        let _ = fs::remove_dir_all(&missing);
+
+        let res = client.tool_call(
+            "fileio_find_files",
+            json!({"root": missing.to_string_lossy(), "pattern":"*.txt"}),
+        );
+        expect_err_contains(res, "not found");
+    });
+}
+
+#[test]
+fn fileio_find_in_files() {
+    run_case("fileio_find_in_files", |client, root| {
+        let case = case_dir(root, "fileio_find_in_files");
+        let hay = case.join("hay.txt");
+        fs::write(&hay, "needle\nother\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_in_files",
+                json!({"path": case.to_string_lossy(), "pattern":"needle", "use_regex":false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_in_files array");
+        assert!(arr.iter().any(|m| {
+            m.get("file_path").and_then(|p| p.as_str()) == Some(hay.to_string_lossy().as_ref())
+        }));
+    });
+}
+
+#[test]
+fn fileio_find_in_files_case_insensitive() {
+    run_case("fileio_find_in_files_case_insensitive", |client, root| {
+        let case = case_dir(root, "fileio_find_in_files_case_insensitive");
+        let hay = case.join("hay.txt");
+        fs::write(&hay, "Needle\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_in_files",
+                json!({"path": case.to_string_lossy(), "pattern":"needle", "use_regex":false, "case_sensitive": false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_in_files array");
+        assert!(arr.iter().any(|m| {
+            m.get("file_path").and_then(|p| p.as_str()) == Some(hay.to_string_lossy().as_ref())
+        }));
+    });
+}
+
+#[test]
+fn fileio_find_in_files_whole_word() {
+    run_case("fileio_find_in_files_whole_word", |client, root| {
+        let case = case_dir(root, "fileio_find_in_files_whole_word");
+        let hay = case.join("hay.txt");
+        fs::write(&hay, "testing test tested\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_in_files",
+                json!({"path": case.to_string_lossy(), "pattern":"test", "use_regex":false, "whole_word": true}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_in_files array");
+        assert!(arr.iter().any(|m| {
+            m.get("file_path").and_then(|p| p.as_str()) == Some(hay.to_string_lossy().as_ref())
+        }));
+    });
+}
+
+#[test]
+fn fileio_patch_file_add_remove() {
+    run_case("fileio_patch_file_add_remove", |client, root| {
+        let case = case_dir(root, "fileio_patch_file_add_remove");
         let path = case.join("patch.txt");
         fs::write(&path, "line 1\nline 2\nline 3\n").unwrap();
 
-        let patch = json!({"operations":[{"type":"add","line":2,"content":"inserted"},{"type":"remove","line":3}]});
+        let patch = json!({"operations": [{"type": "add", "line": 2, "content": "inserted"}, {"type": "remove", "line": 3}]});
         client
-			.tool_call(
-				"fileio_patch_file",
-				json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
-			)
-			.unwrap();
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            "line 1\ninserted\nline 2"
-        );
+            .tool_call(
+                "fileio_patch_file",
+                json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
+            )
+            .unwrap();
 
+        let content = fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines, vec!["line 1", "inserted", "line 2"]);
+    });
+}
+
+#[test]
+fn fileio_patch_file_unified_diff() {
+    run_case("fileio_patch_file_unified_diff", |client, root| {
+        let case = case_dir(root, "fileio_patch_file_unified_diff");
+        let path = case.join("patch.txt");
         fs::write(&path, "line 1\nline 2\nline 3\n").unwrap();
+
         let diff = "@@ -1,3 +1,3 @@\n line 1\n-line 2\n+line two\n line 3\n";
         client
             .tool_call(
@@ -286,235 +915,659 @@ fn mcp_stdio_integration_suite() {
         let content = fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines, vec!["line 1", "line two", "line 3"]);
-    }
+    });
+}
 
-    // mkdir / list_directory
-    {
-        let case = case_dir(&test_root, "mkdir_list");
-        let dir = case.join("a/b/c");
+#[test]
+fn fileio_patch_file_unified_diff_empty_file_add_line() {
+    run_case("fileio_patch_file_unified_diff_empty_file_add_line", |client, root| {
+        let case = case_dir(root, "fileio_patch_file_unified_diff_empty_file_add_line");
+        let path = case.join("patch.txt");
+        fs::write(&path, "").unwrap();
+
+        let diff = "--- a\n+++ b\n@@\n+first";
         client
             .tool_call(
-                "fileio_make_directory",
-                json!({"path": [dir.to_string_lossy()]}),
+                "fileio_patch_file",
+                json!({"path": path.to_string_lossy(), "patch": diff, "format":"unified_diff"}),
             )
             .unwrap();
-        fs::write(dir.join("f.txt"), "x").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+    });
+}
 
-        let res = client
+#[test]
+fn fileio_patch_file_unified_diff_add_at_end() {
+    run_case("fileio_patch_file_unified_diff_add_at_end", |client, root| {
+        let case = case_dir(root, "fileio_patch_file_unified_diff_add_at_end");
+        let path = case.join("patch.txt");
+        fs::write(&path, "line 1\nline 2\n").unwrap();
+
+        let diff = "--- a\n+++ b\n@@\n line 1\n line 2\n+line 3";
+        client
             .tool_call(
-                "fileio_list_directory",
-                json!({"path": case.to_string_lossy(), "recursive": true}),
+                "fileio_patch_file",
+                json!({"path": path.to_string_lossy(), "patch": diff, "format":"unified_diff"}),
             )
             .unwrap();
-        let v = extract_value(&res);
-        assert!(v.as_array().unwrap().len() >= 2);
-    }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "line 1\nline 2\nline 3");
+    });
+}
 
-    // find_files / find_in_files
-    {
-        let case = case_dir(&test_root, "find");
-        fs::write(case.join("a.txt"), "hello needle\n").unwrap();
-        fs::write(case.join("b.log"), "nope\n").unwrap();
+#[test]
+fn fileio_patch_file_add_remove_lines_empty_file_add_first_line() {
+    run_case(
+        "fileio_patch_file_add_remove_lines_empty_file_add_first_line",
+        |client, root| {
+            let case = case_dir(
+                root,
+                "fileio_patch_file_add_remove_lines_empty_file_add_first_line",
+            );
+            let path = case.join("patch.txt");
+            fs::write(&path, "").unwrap();
 
-        let res = client
-            .tool_call(
-                "fileio_find_files",
-                json!({"root": case.to_string_lossy(), "pattern":"*.txt"}),
-            )
-            .unwrap();
-        let v = extract_value(&res);
-        assert!(v
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|p| p == &Value::String(case.join("a.txt").to_string_lossy().to_string())));
+            let patch = json!({"operations": [{"type": "add", "line": 1, "content": "first"}]});
+            client
+                .tool_call(
+                    "fileio_patch_file",
+                    json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
+                )
+                .unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+        },
+    );
+}
 
-        let res = client
-            .tool_call(
-                "fileio_find_in_files",
-                json!({"path": case.to_string_lossy(), "pattern":"needle", "use_regex":false}),
-            )
-            .unwrap();
-        let v = extract_value(&res);
-        assert!(!v.as_array().unwrap().is_empty());
-    }
+#[test]
+fn fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors() {
+    run_case(
+        "fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors",
+        |client, root| {
+            let case = case_dir(
+                root,
+                "fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors",
+            );
+            let path = case.join("patch.txt");
+            fs::write(&path, "").unwrap();
+            let patch = json!({"operations": [{"type": "add", "line": 2, "content": "x"}]});
 
-    // copy / move / remove
-    {
-        let case = case_dir(&test_root, "cp_mv_rm");
+            let res = client.tool_call(
+                "fileio_patch_file",
+                json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
+            );
+            expect_err_contains(res, "Invalid line number");
+        },
+    );
+}
+
+#[test]
+fn fileio_patch_file_add_remove_lines_negative_line_rejected() {
+    run_case(
+        "fileio_patch_file_add_remove_lines_negative_line_rejected",
+        |client, root| {
+            let case = case_dir(root, "fileio_patch_file_add_remove_lines_negative_line_rejected");
+            let path = case.join("patch.txt");
+            fs::write(&path, "a\n").unwrap();
+            let patch = "{\"operations\": [{\"type\": \"remove\", \"line\": -1}]}";
+
+            let res = client.tool_call(
+                "fileio_patch_file",
+                json!({"path": path.to_string_lossy(), "patch": patch, "format":"add_remove_lines"}),
+            );
+            expect_err_contains(res, "numeric");
+        },
+    );
+}
+
+#[test]
+fn fileio_copy() {
+    run_case("fileio_copy", |client, root| {
+        let case = case_dir(root, "fileio_copy");
         let src = case.join("src.txt");
-        fs::write(&src, "data").unwrap();
-        let dst_dir = case.join("dst");
-        fs::create_dir_all(&dst_dir).unwrap();
+        fs::write(&src, "copyme").unwrap();
+        let dst = case.join("dst");
+        fs::create_dir_all(&dst).unwrap();
 
         client
             .tool_call(
                 "fileio_copy",
-                json!({"source":[src.to_string_lossy()],"destination":dst_dir.to_string_lossy()}),
+                json!({"source": [src.to_string_lossy()], "destination": dst.to_string_lossy()}),
             )
             .unwrap();
-        assert_eq!(fs::read_to_string(dst_dir.join("src.txt")).unwrap(), "data");
+        let copied = dst.join("src.txt");
+        assert!(copied.exists());
+        assert_eq!(fs::read_to_string(copied).unwrap(), "copyme");
+    });
+}
 
-        let moved = case.join("moved.txt");
+#[test]
+fn fileio_copy_dir_recursive() {
+    run_case("fileio_copy_dir_recursive", |client, root| {
+        let case = case_dir(root, "fileio_copy_dir_recursive");
+        let src_dir = case.join("src");
+        fs::create_dir_all(src_dir.join("nested")).unwrap();
+        fs::write(src_dir.join("nested/f.txt"), "x").unwrap();
+        let dst_dir = case.join("dst");
+
+        client
+            .tool_call(
+                "fileio_copy",
+                json!({"source": [src_dir.to_string_lossy()], "destination": dst_dir.to_string_lossy(), "recursive": true}),
+            )
+            .unwrap();
+        assert!(dst_dir.join("nested/f.txt").exists());
+    });
+}
+
+#[test]
+fn fileio_copy_dir_without_recursive_errors() {
+    run_case("fileio_copy_dir_without_recursive_errors", |client, root| {
+        let case = case_dir(root, "fileio_copy_dir_without_recursive_errors");
+        let src_dir = case.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        let dst_dir = case.join("dst");
+        fs::create_dir_all(&dst_dir).unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_copy",
+                json!({"source": [src_dir.to_string_lossy()], "destination": dst_dir.to_string_lossy(), "recursive": false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("copy results array");
+        let status = arr
+            .get(0)
+            .and_then(|x| x.get("status"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        assert!(status.to_lowercase().contains("error"), "expected per-source error, got: {v}");
+    });
+}
+
+#[test]
+fn fileio_copy_glob() {
+    run_case("fileio_copy_glob", |client, root| {
+        let case = case_dir(root, "fileio_copy_glob");
+        fs::write(case.join("a.txt"), "a").unwrap();
+        fs::write(case.join("b.txt"), "b").unwrap();
+        fs::write(case.join("c.log"), "c").unwrap();
+        let dst = case.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+
+        let pattern = case.join("*.txt").to_string_lossy().to_string();
+        let res = client
+            .tool_call(
+                "fileio_copy",
+                json!({"source": [pattern], "destination": dst.to_string_lossy()}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("copy results array");
+        assert!(arr.iter().all(|r| r.get("status") == Some(&Value::String("ok".to_string()))));
+        assert!(dst.join("a.txt").exists());
+        assert!(dst.join("b.txt").exists());
+        assert!(!dst.join("c.log").exists());
+    });
+}
+
+#[test]
+fn fileio_copy_glob_no_match_errors() {
+    run_case("fileio_copy_glob_no_match_errors", |client, root| {
+        let case = case_dir(root, "fileio_copy_glob_no_match_errors");
+        let dst = case.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let pattern = case.join("*.nope").to_string_lossy().to_string();
+
+        let res = client.tool_call(
+            "fileio_copy",
+            json!({"source": [pattern], "destination": dst.to_string_lossy()}),
+        );
+        expect_err_contains(res, "No files match pattern");
+    });
+}
+
+#[test]
+fn fileio_move() {
+    run_case("fileio_move", |client, root| {
+        let case = case_dir(root, "fileio_move");
+        let src = case.join("src.txt");
+        fs::write(&src, "moveme").unwrap();
+        let dst = case.join("moved.txt");
+        let _ = fs::remove_file(&dst);
+
         client
             .tool_call(
                 "fileio_move",
-                json!({"source":[src.to_string_lossy()],"destination":moved.to_string_lossy()}),
+                json!({"source": [src.to_string_lossy()], "destination": dst.to_string_lossy()}),
             )
             .unwrap();
         assert!(!src.exists());
-        assert!(moved.exists());
+        assert_eq!(fs::read_to_string(dst).unwrap(), "moveme");
+    });
+}
+
+#[test]
+fn fileio_move_glob() {
+    run_case("fileio_move_glob", |client, root| {
+        let case = case_dir(root, "fileio_move_glob");
+        fs::write(case.join("a.txt"), "a").unwrap();
+        fs::write(case.join("b.txt"), "b").unwrap();
+        fs::write(case.join("c.log"), "c").unwrap();
+        let dst = case.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let pattern = case.join("*.txt").to_string_lossy().to_string();
+
+        let res = client
+            .tool_call(
+                "fileio_move",
+                json!({"source": [pattern], "destination": dst.to_string_lossy()}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("move results array");
+        assert!(arr.iter().all(|r| r.get("status") == Some(&Value::String("ok".to_string()))));
+        assert!(!case.join("a.txt").exists());
+        assert!(!case.join("b.txt").exists());
+        assert!(case.join("c.log").exists());
+        assert!(dst.join("a.txt").exists());
+        assert!(dst.join("b.txt").exists());
+    });
+}
+
+#[test]
+fn fileio_move_glob_no_match_errors() {
+    run_case("fileio_move_glob_no_match_errors", |client, root| {
+        let case = case_dir(root, "fileio_move_glob_no_match_errors");
+        let dst = case.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let pattern = case.join("*.nope").to_string_lossy().to_string();
+
+        let res = client.tool_call(
+            "fileio_move",
+            json!({"source": [pattern], "destination": dst.to_string_lossy()}),
+        );
+        expect_err_contains(res, "No files match pattern");
+    });
+}
+
+#[test]
+fn fileio_remove() {
+    run_case("fileio_remove", |client, root| {
+        let case = case_dir(root, "fileio_remove");
+        let path = case.join("rm.txt");
+        fs::write(&path, "x").unwrap();
 
         client
-            .tool_call("fileio_remove", json!({"path":[moved.to_string_lossy()]}))
+            .tool_call(
+                "fileio_remove",
+                json!({"path": [path.to_string_lossy()], "force": false}),
+            )
             .unwrap();
-        assert!(!moved.exists());
-    }
+        assert!(!path.exists());
+    });
+}
 
-    // remove_directory
-    {
-        let case = case_dir(&test_root, "rmdir");
-        let dir = case.join("d");
-        fs::create_dir_all(&dir).unwrap();
+#[test]
+fn fileio_remove_recursive_dir() {
+    run_case("fileio_remove_recursive_dir", |client, root| {
+        let case = case_dir(root, "fileio_remove_recursive_dir");
+        let d = case.join("d");
+        fs::create_dir_all(d.join("nested")).unwrap();
+        fs::write(d.join("nested/f.txt"), "x").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_remove",
+                json!({"path": [d.to_string_lossy()], "recursive": true, "force": false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("remove results array");
+        assert_eq!(arr[0].get("status").and_then(|s| s.as_str()), Some("ok"));
+        assert!(!d.exists());
+    });
+}
+
+#[test]
+fn fileio_remove_glob() {
+    run_case("fileio_remove_glob", |client, root| {
+        let case = case_dir(root, "fileio_remove_glob");
+        fs::write(case.join("a.tmp"), "x").unwrap();
+        fs::write(case.join("b.tmp"), "x").unwrap();
+        fs::write(case.join("c.log"), "x").unwrap();
+        let pattern = case.join("*.tmp").to_string_lossy().to_string();
+
+        let res = client
+            .tool_call(
+                "fileio_remove",
+                json!({"path": [pattern], "force": false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("remove results array");
+        assert!(arr.iter().all(|r| r.get("status") == Some(&Value::String("ok".to_string()))));
+        assert!(!case.join("a.tmp").exists());
+        assert!(!case.join("b.tmp").exists());
+        assert!(case.join("c.log").exists());
+    });
+}
+
+#[test]
+fn fileio_remove_glob_no_match_errors() {
+    run_case("fileio_remove_glob_no_match_errors", |client, root| {
+        let case = case_dir(root, "fileio_remove_glob_no_match_errors");
+        let pattern = case.join("*.nope").to_string_lossy().to_string();
+
+        let res = client.tool_call(
+            "fileio_remove",
+            json!({"path": [pattern], "force": false}),
+        );
+        expect_err_contains(res, "No files match pattern");
+    });
+}
+
+#[test]
+fn fileio_remove_force_missing_ok() {
+    run_case("fileio_remove_force_missing_ok", |client, root| {
+        let case = case_dir(root, "fileio_remove_force_missing_ok");
+        let missing = case.join("missing.txt");
+        let _ = fs::remove_file(&missing);
+
+        client
+            .tool_call(
+                "fileio_remove",
+                json!({"path": [missing.to_string_lossy()], "force": true}),
+            )
+            .unwrap();
+    });
+}
+
+#[test]
+fn fileio_remove_directory() {
+    run_case("fileio_remove_directory", |client, root| {
+        let case = case_dir(root, "fileio_remove_directory");
+        let d = case.join("dir");
+        fs::create_dir_all(d.join("nested")).unwrap();
+        fs::write(d.join("nested/f.txt"), "x").unwrap();
+
         client
             .tool_call(
                 "fileio_remove_directory",
-                json!({"path":[dir.to_string_lossy()]}),
+                json!({"path": [d.to_string_lossy()], "recursive": true}),
             )
             .unwrap();
-        assert!(!dir.exists());
-    }
+        assert!(!d.exists());
+    });
+}
 
-    // touch / stat
-    {
-        let case = case_dir(&test_root, "touch_stat");
-        let p = case.join("t.txt");
-        client
-            .tool_call("fileio_touch", json!({"path":[p.to_string_lossy()]}))
-            .unwrap();
-        assert!(p.exists());
+#[test]
+fn fileio_remove_directory_non_recursive_reports_error() {
+    run_case(
+        "fileio_remove_directory_non_recursive_reports_error",
+        |client, root| {
+            let case = case_dir(root, "fileio_remove_directory_non_recursive_reports_error");
+            let d = case.join("dir");
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("f.txt"), "x").unwrap();
 
-        let res = client
-            .tool_call("fileio_stat", json!({"path":[p.to_string_lossy()]}))
-            .unwrap();
-        let v = extract_value(&res);
-        assert!(v.as_array().unwrap()[0].get("size").is_some());
-    }
+            let res = client
+                .tool_call(
+                    "fileio_remove_directory",
+                    json!({"path": [d.to_string_lossy()], "recursive": false}),
+                )
+                .unwrap();
+            let v = extract_value(&res);
+            let arr = v.as_array().expect("rmdir results array");
+            let status = arr
+                .get(0)
+                .and_then(|x| x.get("status"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            assert!(
+                status.to_lowercase().contains("not empty"),
+                "expected not-empty status, got: {status}"
+            );
+            assert!(d.exists());
+        },
+    );
+}
 
-    // get/set permissions
-    {
-        let case = case_dir(&test_root, "perms");
-        let p = case.join("perm.txt");
-        fs::write(&p, "x").unwrap();
-
-        client
-            .tool_call(
-                "fileio_set_permissions",
-                json!({"path": [p.to_string_lossy()], "mode":"700"}),
-            )
-            .unwrap();
-
-        let res = client
-            .tool_call(
-                "fileio_get_permissions",
-                json!({"path": [p.to_string_lossy()]}),
-            )
-            .unwrap();
-        let v = extract_value(&res);
-        let mode = v
-            .get(p.to_string_lossy().as_ref())
-            .and_then(|m| m.as_str())
-            .unwrap();
-        assert!(mode.ends_with("700"), "expected 700, got: {mode}");
-    }
-
-    // count_lines / count_words
-    {
-        let case = case_dir(&test_root, "counts");
-        let p = case.join("x.txt");
-        fs::write(&p, "a\n\n\nb").unwrap();
-
-        let res = client
-            .tool_call("fileio_count_lines", json!({"path":[p.to_string_lossy()]}))
-            .unwrap();
-        let v = extract_value(&res);
-        assert_eq!(
-            v.as_array().unwrap()[0]
-                .get("lines")
-                .and_then(|n| n.as_u64()),
-            Some(4)
-        );
-
-        let res = client
-            .tool_call("fileio_count_words", json!({"path":[p.to_string_lossy()]}))
-            .unwrap();
-        let v = extract_value(&res);
-        assert!(v.as_array().unwrap()[0]
-            .get("words")
-            .and_then(|n| n.as_u64())
-            .is_some());
-    }
-
-    // mktemp
-    {
-        let case = case_dir(&test_root, "mktemp");
-        let res = client
-            .tool_call(
-                "fileio_create_temporary",
-                json!({"type":"dir","template":case.to_string_lossy()}),
-            )
-            .unwrap();
-        let p = PathBuf::from(extract_value(&res).as_str().unwrap());
-        assert!(p.exists());
-        assert!(p.is_dir());
-    }
-
-    // links (unix)
-    {
-        let case = case_dir(&test_root, "links");
-        let target = case.join("t.txt");
+#[test]
+fn fileio_create_hard_link() {
+    run_case("fileio_create_hard_link", |client, root| {
+        let case = case_dir(root, "fileio_create_hard_link");
+        let target = case.join("target.txt");
         fs::write(&target, "x").unwrap();
+        let link = case.join("hard.txt");
+        let _ = fs::remove_file(&link);
 
-        let hard = case.join("hard.txt");
         client
             .tool_call(
                 "fileio_create_hard_link",
-                json!({"target": target.to_string_lossy(), "link_path": hard.to_string_lossy()}),
+                json!({"target": target.to_string_lossy(), "link_path": link.to_string_lossy()}),
             )
             .unwrap();
-        assert_eq!(fs::read_to_string(&hard).unwrap(), "x");
+        assert!(link.exists());
 
-        let sym = case.join("sym.txt");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(fs::metadata(&target).unwrap().ino(), fs::metadata(&link).unwrap().ino());
+        }
+    });
+}
+
+#[test]
+fn fileio_create_hard_link_missing_target_errors() {
+    run_case("fileio_create_hard_link_missing_target_errors", |client, root| {
+        let case = case_dir(root, "fileio_create_hard_link_missing_target_errors");
+        let target = case.join("missing.txt");
+        let _ = fs::remove_file(&target);
+        let link = case.join("hard.txt");
+        let _ = fs::remove_file(&link);
+
+        let res = client.tool_call(
+            "fileio_create_hard_link",
+            json!({"target": target.to_string_lossy(), "link_path": link.to_string_lossy()}),
+        );
+        expect_err_contains(res, "not found");
+    });
+}
+
+#[test]
+fn fileio_create_symbolic_link() {
+    run_case("fileio_create_symbolic_link", |client, root| {
+        let case = case_dir(root, "fileio_create_symbolic_link");
+        let target = case.join("target.txt");
+        fs::write(&target, "x").unwrap();
+        let link = case.join("sym.txt");
+        let _ = fs::remove_file(&link);
+
         client
             .tool_call(
                 "fileio_create_symbolic_link",
-                json!({"target": target.to_string_lossy(), "link_path": sym.to_string_lossy()}),
+                json!({"target": target.to_string_lossy(), "link_path": link.to_string_lossy()}),
             )
             .unwrap();
-        assert!(sym.exists());
+
+        #[cfg(unix)]
+        {
+            assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+            let stored = fs::read_link(&link).unwrap();
+            assert_eq!(stored.to_string_lossy(), target.to_string_lossy());
+        }
+    });
+}
+
+#[test]
+fn fileio_create_symbolic_link_broken_target_ok() {
+    run_case("fileio_create_symbolic_link_broken_target_ok", |client, root| {
+        let case = case_dir(root, "fileio_create_symbolic_link_broken_target_ok");
+        let missing_target = case.join("missing.txt");
+        let _ = fs::remove_file(&missing_target);
+        let link = case.join("broken.txt");
+        let _ = fs::remove_file(&link);
+
+        client
+            .tool_call(
+                "fileio_create_symbolic_link",
+                json!({"target": missing_target.to_string_lossy(), "link_path": link.to_string_lossy()}),
+            )
+            .unwrap();
+
+        #[cfg(unix)]
+        {
+            assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+            let stored = fs::read_link(&link).unwrap();
+            assert_eq!(stored.to_string_lossy(), missing_target.to_string_lossy());
+        }
+    });
+}
+
+#[test]
+fn fileio_read_symbolic_link_ok() {
+    run_case("fileio_read_symbolic_link_ok", |client, root| {
+        let case = case_dir(root, "fileio_read_symbolic_link_ok");
+        let target = case.join("t.txt");
+        fs::write(&target, "x").unwrap();
+        let link = case.join("l.txt");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&target, &link).unwrap();
+        }
 
         let res = client
             .tool_call(
                 "fileio_read_symbolic_link",
-                json!({"path": sym.to_string_lossy()}),
+                json!({"path": link.to_string_lossy()}),
             )
             .unwrap();
-        let v = extract_value(&res);
-        assert_eq!(v, Value::String(target.to_string_lossy().to_string()));
-    }
+        assert_eq!(extract_value(&res), Value::String(target.to_string_lossy().to_string()));
+    });
+}
 
-    // path utils + pwd
-    {
+#[test]
+fn fileio_read_symbolic_link_relative_target() {
+    run_case("fileio_read_symbolic_link_relative_target", |client, root| {
+        let case = case_dir(root, "fileio_read_symbolic_link_relative_target");
+        fs::write(case.join("target.txt"), "x").unwrap();
+        let link = case.join("link.txt");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("target.txt", &link).unwrap();
+        }
+
         let res = client
-            .tool_call("fileio_get_basename", json!({"path":"/a/b/c.txt"}))
+            .tool_call(
+                "fileio_read_symbolic_link",
+                json!({"path": link.to_string_lossy()}),
+            )
+            .unwrap();
+        assert_eq!(extract_value(&res), Value::String("target.txt".to_string()));
+    });
+}
+
+#[test]
+fn fileio_read_symbolic_link_non_symlink_errors() {
+    run_case("fileio_read_symbolic_link_non_symlink_errors", |client, root| {
+        let case = case_dir(root, "fileio_read_symbolic_link_non_symlink_errors");
+        let f = case.join("file.txt");
+        fs::write(&f, "x").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_read_symbolic_link",
+                json!({"path": f.to_string_lossy()}),
+            );
+        expect_err_contains(res, "not a symbolic link");
+    });
+}
+
+#[test]
+fn fileio_get_basename() {
+    run_case("fileio_get_basename", |client, root| {
+        let case = case_dir(root, "fileio_get_basename");
+        let p = case.join("a/b/c.txt");
+
+        let res = client
+            .tool_call("fileio_get_basename", json!({"path": p.to_string_lossy()}))
             .unwrap();
         assert_eq!(extract_value(&res), Value::String("c.txt".to_string()));
+    });
+}
+
+#[test]
+fn fileio_get_basename_trailing_slash() {
+    run_case("fileio_get_basename_trailing_slash", |client, _root| {
+        let res = client
+            .tool_call("fileio_get_basename", json!({"path": "/usr/bin/"}))
+            .unwrap();
+        assert_eq!(extract_value(&res), Value::String("bin".to_string()));
+    });
+}
+
+#[test]
+fn fileio_get_dirname() {
+    run_case("fileio_get_dirname", |client, root| {
+        let case = case_dir(root, "fileio_get_dirname");
+        let p = case.join("a/b/c.txt");
 
         let res = client
-            .tool_call("fileio_get_dirname", json!({"path":"/a/b/c.txt"}))
+            .tool_call("fileio_get_dirname", json!({"path": p.to_string_lossy()}))
             .unwrap();
-        assert_eq!(extract_value(&res), Value::String("/a/b".to_string()));
+        assert_eq!(
+            extract_value(&res),
+            Value::String(p.parent().unwrap().to_string_lossy().to_string())
+        );
+    });
+}
 
+#[test]
+fn fileio_get_dirname_no_dir_component() {
+    run_case("fileio_get_dirname_no_dir_component", |client, _root| {
+        let res = client
+            .tool_call("fileio_get_dirname", json!({"path": "file.txt"}))
+            .unwrap();
+        assert_eq!(extract_value(&res), Value::String("".to_string()));
+    });
+}
+
+#[test]
+fn fileio_get_canonical_path_ok() {
+    run_case("fileio_get_canonical_path_ok", |client, root| {
+        let case = case_dir(root, "fileio_get_canonical_path_ok");
+        let p = case.join("x.txt");
+        fs::write(&p, "x").unwrap();
+
+        let res = client
+            .tool_call("fileio_get_canonical_path", json!({"path": p.to_string_lossy()}))
+            .unwrap();
+        assert_eq!(
+            PathBuf::from(extract_value(&res).as_str().unwrap()),
+            p.canonicalize().unwrap()
+        );
+    });
+}
+
+#[test]
+fn fileio_get_canonical_path_missing_errors() {
+    run_case("fileio_get_canonical_path_missing_errors", |client, root| {
+        let case = case_dir(root, "fileio_get_canonical_path_missing_errors");
+        let p = case.join("missing.txt");
+        let _ = fs::remove_file(&p);
+
+        let res = client.tool_call("fileio_get_canonical_path", json!({"path": p.to_string_lossy()}));
+        expect_err_contains(res, "not found");
+    });
+}
+
+#[test]
+fn fileio_get_current_directory() {
+    run_case("fileio_get_current_directory", |client, _root| {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let res = client
             .tool_call("fileio_get_current_directory", json!({}))
             .unwrap();
@@ -522,20 +1575,162 @@ fn mcp_stdio_integration_suite() {
             extract_value(&res),
             Value::String(repo_root.to_string_lossy().to_string())
         );
+    });
+}
+
+#[test]
+fn fileio_create_temporary_file() {
+    run_case("fileio_create_temporary_file", |client, root| {
+        let case = case_dir(root, "fileio_create_temporary_file");
+
+        let res = client
+            .tool_call(
+                "fileio_create_temporary",
+                json!({"type": "file", "template": case.to_string_lossy()}),
+            )
+            .unwrap();
+        let p = PathBuf::from(extract_value(&res).as_str().unwrap());
+        assert!(p.exists() && p.is_file());
+    });
+}
+
+#[test]
+fn fileio_create_temporary_file_no_template() {
+    run_case("fileio_create_temporary_file_no_template", |client, _root| {
+        let res = client
+            .tool_call("fileio_create_temporary", json!({"type": "file"}))
+            .unwrap();
+        let p = PathBuf::from(extract_value(&res).as_str().unwrap());
+        assert!(p.exists() && p.is_file());
+    });
+}
+
+#[test]
+fn fileio_create_temporary_dir() {
+    run_case("fileio_create_temporary_dir", |client, root| {
+        let case = case_dir(root, "fileio_create_temporary_dir");
+
+        let res = client
+            .tool_call(
+                "fileio_create_temporary",
+                json!({"type": "dir", "template": case.to_string_lossy()}),
+            )
+            .unwrap();
+        let p = PathBuf::from(extract_value(&res).as_str().unwrap());
+        assert!(p.exists() && p.is_dir());
+    });
+}
+
+#[test]
+fn fileio_count_lines_ok() {
+    run_case("fileio_count_lines_ok", |client, root| {
+        let case = case_dir(root, "fileio_count_lines_ok");
+        let p = case.join("c.txt");
+        fs::write(&p, "a\nb\n").unwrap();
+
+        let res = client
+            .tool_call("fileio_count_lines", json!({"path": [p.to_string_lossy()]}))
+            .unwrap();
+        let v = extract_value(&res);
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("lines")
+                .and_then(|n| n.as_u64()),
+            Some(2)
+        );
+    });
+}
+
+#[test]
+fn fileio_count_lines_string_path_errors() {
+    run_case("fileio_count_lines_string_path_errors", |client, root| {
+        let case = case_dir(root, "fileio_count_lines_string_path_errors");
+        let p = case.join("c.txt");
+        fs::write(&p, "a\n").unwrap();
+
+        let res = client.tool_call("fileio_count_lines", json!({"path": p.to_string_lossy()}));
+        expect_err_contains(res, "Path must be an array of strings");
+    });
+}
+
+#[test]
+fn fileio_count_lines_missing_status() {
+    run_case("fileio_count_lines_missing_status", |client, root| {
+        let case = case_dir(root, "fileio_count_lines_missing_status");
+        let p = case.join("missing.txt");
+        let _ = fs::remove_file(&p);
+
+        let res = client
+            .tool_call("fileio_count_lines", json!({"path": [p.to_string_lossy()]}))
+            .unwrap();
+        let v = extract_value(&res);
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("exists")
+                .and_then(|b| b.as_bool()),
+            Some(false)
+        );
+    });
+}
+
+#[test]
+fn fileio_count_words_ok() {
+    run_case("fileio_count_words_ok", |client, root| {
+        let case = case_dir(root, "fileio_count_words_ok");
+        let p = case.join("w.txt");
+        fs::write(&p, "hello world\nfoo").unwrap();
+
+        let res = client
+            .tool_call("fileio_count_words", json!({"path": [p.to_string_lossy()]}))
+            .unwrap();
+        let v = extract_value(&res);
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("words")
+                .and_then(|n| n.as_u64()),
+            Some(3)
+        );
+    });
+}
+
+#[test]
+fn fileio_count_words_missing_status() {
+    run_case("fileio_count_words_missing_status", |client, root| {
+        let case = case_dir(root, "fileio_count_words_missing_status");
+        let p = case.join("missing.txt");
+        let _ = fs::remove_file(&p);
+
+        let res = client
+            .tool_call("fileio_count_words", json!({"path": [p.to_string_lossy()]}))
+            .unwrap();
+        let v = extract_value(&res);
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("exists")
+                .and_then(|b| b.as_bool()),
+            Some(false)
+        );
+    });
+}
+
+#[test]
+fn fileio_change_ownership_skipped_unless_enabled() {
+    if !dangerous_enabled() {
+        return;
     }
 
-    // dangerous: chown (only if enabled)
-    if dangerous_enabled() {
-        let case = case_dir(&test_root, "chown");
+    run_case("fileio_change_ownership", |client, root| {
+        let case = case_dir(root, "fileio_change_ownership");
         let p = case.join("owned.txt");
         fs::write(&p, "x").unwrap();
         let uid = geteuid().as_raw().to_string();
         let gid = getegid().as_raw().to_string();
+
         client
             .tool_call(
                 "fileio_change_ownership",
-                json!({"path":[p.to_string_lossy()],"user":uid,"group":gid}),
+                json!({"path": [p.to_string_lossy()], "user": uid, "group": gid}),
             )
             .unwrap();
-    }
+    });
 }
