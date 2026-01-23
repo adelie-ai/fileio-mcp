@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![recursion_limit = "256"]
 
 // Library crate for fileio-mcp
 

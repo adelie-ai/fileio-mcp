@@ -878,145 +878,104 @@ fn fileio_find_in_files_whole_word() {
 }
 
 #[test]
-fn fileio_patch_file_add_remove() {
-    run_case("fileio_patch_file_add_remove", |client, root| {
-        let case = case_dir(root, "fileio_patch_file_add_remove");
-        let path = case.join("patch.txt");
-        fs::write(&path, "line 1\nline 2\nline 3\n").unwrap();
+fn fileio_edit_file_insert_after_anchor() {
+    run_case("fileio_edit_file_insert_after_anchor", |client, root| {
+        let case = case_dir(root, "fileio_edit_file_insert_after_anchor");
+        let path = case.join("Cargo.toml");
+        fs::write(
+            &path,
+            "[package]\nname=\"x\"\n\n[dependencies]\nanyhow=\"1\"\n",
+        )
+        .unwrap();
 
-        let patch = json!({"operations": [{"type": "add", "line": 2, "content": "inserted"}, {"type": "remove", "line": 3}]});
         client
             .tool_call(
-                "fileio_patch_file",
-                json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
+                "fileio_edit_file",
+                json!({
+                    "path": path.to_string_lossy(),
+                    "edits": [
+                        {
+                            "op": "insert_after",
+                            "search": "[dependencies]\n",
+                            "text": "rusqlite = { version = \"0.31\", features = [\"bundled\"] }\n"
+                        }
+                    ]
+                }),
             )
             .unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines, vec!["line 1", "inserted", "line 2"]);
+        assert_eq!(
+            content,
+            "[package]\nname=\"x\"\n\n[dependencies]\nrusqlite = { version = \"0.31\", features = [\"bundled\"] }\nanyhow=\"1\"\n"
+        );
     });
 }
 
 #[test]
-fn fileio_patch_file_unified_diff() {
-    run_case("fileio_patch_file_unified_diff", |client, root| {
-        let case = case_dir(root, "fileio_patch_file_unified_diff");
-        let path = case.join("patch.txt");
-        fs::write(&path, "line 1\nline 2\nline 3\n").unwrap();
+fn fileio_edit_file_replace_lines() {
+    run_case("fileio_edit_file_replace_lines", |client, root| {
+        let case = case_dir(root, "fileio_edit_file_replace_lines");
+        let path = case.join("x.txt");
+        fs::write(&path, "a\nb\nc\n").unwrap();
 
-        let diff = "@@ -1,3 +1,3 @@\n line 1\n-line 2\n+line two\n line 3\n";
         client
             .tool_call(
-                "fileio_patch_file",
-                json!({"path": path.to_string_lossy(), "patch": diff, "format":"unified_diff"}),
+                "fileio_edit_file",
+                json!({
+                    "path": path.to_string_lossy(),
+                    "edits": [
+                        {"op":"replace_lines", "start_line": 2, "end_line": 2, "text": "B"}
+                    ]
+                }),
             )
             .unwrap();
-        let content = fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines, vec!["line 1", "line two", "line 3"]);
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nB\nc\n");
     });
 }
 
 #[test]
-fn fileio_patch_file_unified_diff_empty_file_add_line() {
-    run_case("fileio_patch_file_unified_diff_empty_file_add_line", |client, root| {
-        let case = case_dir(root, "fileio_patch_file_unified_diff_empty_file_add_line");
-        let path = case.join("patch.txt");
-        fs::write(&path, "").unwrap();
+fn fileio_edit_file_delete_regex() {
+    run_case("fileio_edit_file_delete_regex", |client, root| {
+        let case = case_dir(root, "fileio_edit_file_delete_regex");
+        let path = case.join("x.txt");
+        fs::write(&path, "foo=1\nbar=2\n").unwrap();
 
-        let diff = "--- a\n+++ b\n@@\n+first";
         client
             .tool_call(
-                "fileio_patch_file",
-                json!({"path": path.to_string_lossy(), "patch": diff, "format":"unified_diff"}),
+                "fileio_edit_file",
+                json!({
+                    "path": path.to_string_lossy(),
+                    "edits": [
+                        {"op":"delete", "search": "foo=.*\\n", "use_regex": true}
+                    ]
+                }),
             )
             .unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "bar=2\n");
     });
 }
 
 #[test]
-fn fileio_patch_file_unified_diff_add_at_end() {
-    run_case("fileio_patch_file_unified_diff_add_at_end", |client, root| {
-        let case = case_dir(root, "fileio_patch_file_unified_diff_add_at_end");
-        let path = case.join("patch.txt");
-        fs::write(&path, "line 1\nline 2\n").unwrap();
+fn fileio_edit_file_missing_anchor_errors() {
+    run_case("fileio_edit_file_missing_anchor_errors", |client, root| {
+        let case = case_dir(root, "fileio_edit_file_missing_anchor_errors");
+        let path = case.join("x.txt");
+        fs::write(&path, "hello\n").unwrap();
 
-        let diff = "--- a\n+++ b\n@@\n line 1\n line 2\n+line 3";
-        client
-            .tool_call(
-                "fileio_patch_file",
-                json!({"path": path.to_string_lossy(), "patch": diff, "format":"unified_diff"}),
-            )
-            .unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "line 1\nline 2\nline 3");
+        let res = client.tool_call(
+            "fileio_edit_file",
+            json!({
+                "path": path.to_string_lossy(),
+                "edits": [
+                    {"op":"insert_after", "search":"NOPE", "text":"x"}
+                ]
+            }),
+        );
+        expect_err_contains(res, "not found");
     });
-}
-
-#[test]
-fn fileio_patch_file_add_remove_lines_empty_file_add_first_line() {
-    run_case(
-        "fileio_patch_file_add_remove_lines_empty_file_add_first_line",
-        |client, root| {
-            let case = case_dir(
-                root,
-                "fileio_patch_file_add_remove_lines_empty_file_add_first_line",
-            );
-            let path = case.join("patch.txt");
-            fs::write(&path, "").unwrap();
-
-            let patch = json!({"operations": [{"type": "add", "line": 1, "content": "first"}]});
-            client
-                .tool_call(
-                    "fileio_patch_file",
-                    json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
-                )
-                .unwrap();
-            assert_eq!(fs::read_to_string(&path).unwrap(), "first");
-        },
-    );
-}
-
-#[test]
-fn fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors() {
-    run_case(
-        "fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors",
-        |client, root| {
-            let case = case_dir(
-                root,
-                "fileio_patch_file_add_remove_lines_invalid_line_beyond_end_errors",
-            );
-            let path = case.join("patch.txt");
-            fs::write(&path, "").unwrap();
-            let patch = json!({"operations": [{"type": "add", "line": 2, "content": "x"}]});
-
-            let res = client.tool_call(
-                "fileio_patch_file",
-                json!({"path": path.to_string_lossy(), "patch": patch.to_string(), "format":"add_remove_lines"}),
-            );
-            expect_err_contains(res, "Invalid line number");
-        },
-    );
-}
-
-#[test]
-fn fileio_patch_file_add_remove_lines_negative_line_rejected() {
-    run_case(
-        "fileio_patch_file_add_remove_lines_negative_line_rejected",
-        |client, root| {
-            let case = case_dir(root, "fileio_patch_file_add_remove_lines_negative_line_rejected");
-            let path = case.join("patch.txt");
-            fs::write(&path, "a\n").unwrap();
-            let patch = "{\"operations\": [{\"type\": \"remove\", \"line\": -1}]}";
-
-            let res = client.tool_call(
-                "fileio_patch_file",
-                json!({"path": path.to_string_lossy(), "patch": patch, "format":"add_remove_lines"}),
-            );
-            expect_err_contains(res, "numeric");
-        },
-    );
 }
 
 #[test]

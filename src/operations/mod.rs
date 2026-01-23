@@ -15,7 +15,7 @@ pub mod list_dir;
 pub mod mkdir;
 pub mod mktemp;
 pub mod mv;
-pub mod patch_file;
+pub mod edit_file;
 pub mod path_utils;
 pub mod pwd;
 pub mod read_lines;

@@ -287,26 +287,59 @@ impl ToolRegistry {
                 }
             },
             {
-                "name": "fileio_patch_file",
-                "description": "Apply patches to files. Supports two formats: (1) unified diff format (standard patch format with @@ headers, - for removals, + for additions), and (2) add_remove_lines format (JSON with explicit line operations). Use this to modify files by applying structured changes rather than rewriting entire files. The file must exist before patching.",
+                "name": "fileio_edit_file",
+                "description": "Edit a text file using deterministic, structured operations (LLM-friendly). Supports anchor-based edits (insert_before/insert_after/replace/delete with literal or regex search) and line-based edits (insert_at_line/replace_lines/delete_lines). Prefer this over patch-style diffs. By default, anchor-based edits require a match and will error if not found.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the file to patch. Must exist. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to patch a specific file, use an absolute path or verify the working directory first."
+                            "description": "Path to the file to edit. By default the file must exist unless create_if_missing=true. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect."
                         },
-                        "patch": {
-                            "type": "string",
-                            "description": "Patch content. For unified_diff: standard unified diff text with @@ headers. For add_remove_lines: JSON string with operations array containing 'add' and 'remove' operations with line numbers and content."
+                        "edits": {
+                            "type": "array",
+                            "description": "Array of edit operations applied in order. Anchor-based ops: insert_after/insert_before/replace/delete require 'search' and optionally 'use_regex', 'occurrence' (1-based), 'require_match'. Line-based ops: insert_at_line requires 'line'; replace_lines/delete_lines require 'start_line' and 'end_line'.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "op": {
+                                        "type": "string",
+                                        "enum": [
+                                            "insert_after",
+                                            "insert_before",
+                                            "replace",
+                                            "delete",
+                                            "insert_at_line",
+                                            "replace_lines",
+                                            "delete_lines"
+                                        ]
+                                    },
+                                    "search": {"type": "string"},
+                                    "text": {"type": "string"},
+                                    "use_regex": {"type": "boolean"},
+                                    "occurrence": {"type": "number"},
+                                    "require_match": {"type": "boolean"},
+                                    "line": {"type": "number"},
+                                    "start_line": {"type": "number"},
+                                    "end_line": {"type": "number"}
+                                },
+                                "required": ["op"]
+                            }
                         },
-                        "format": {
-                            "type": "string",
-                            "description": "Patch format. 'unified_diff' for standard patch format, 'add_remove_lines' for JSON-based line operations. Default: 'unified_diff'.",
-                            "enum": ["unified_diff", "add_remove_lines"]
+                        "create_if_missing": {
+                            "type": "boolean",
+                            "description": "If true, creates the file if it does not exist (treats missing file as empty). Default: false."
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "If true, does not write the file; returns the would-be content. Default: false."
+                        },
+                        "return_content": {
+                            "type": "boolean",
+                            "description": "If true, returns the updated file content in the tool result. Default: false (unless dry_run=true)."
                         }
                     },
-                    "required": ["path", "patch"]
+                    "required": ["path", "edits"]
                 }
             },
             {
@@ -656,13 +689,11 @@ impl ToolRegistry {
                     start_offset,
                 )?;
 
-                let lines_value = serde_json::to_value(&lines)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": lines_value
+                        "type": "text",
+                        "text": serde_json::to_string(&lines)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -727,13 +758,11 @@ impl ToolRegistry {
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
-                let modes_value = serde_json::to_value(&modes)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": modes_value
+                        "type": "text",
+                        "text": serde_json::to_string(&modes)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -770,8 +799,9 @@ impl ToolRegistry {
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": serde_json::Value::Array(stat_json_array)
+                        "type": "text",
+                        "text": serde_json::to_string(&stat_json_array)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -818,8 +848,9 @@ impl ToolRegistry {
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": serde_json::Value::Array(entries_json)
+                        "type": "text",
+                        "text": serde_json::to_string(&entries_json)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -845,8 +876,9 @@ impl ToolRegistry {
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": serde_json::Value::Array(matches_json)
+                        "type": "text",
+                        "text": serde_json::to_string(&matches_json)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -909,30 +941,23 @@ impl ToolRegistry {
 
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": serde_json::Value::Array(matches_json)
+                        "type": "text",
+                        "text": serde_json::to_string(&matches_json)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
-            "fileio_patch_file" => {
-                let path = args.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::McpError::InvalidToolParameters(
-                        "Missing required parameter: path".to_string(),
-                    )
-                })?;
-                let patch = args.get("patch").and_then(|v| v.as_str()).ok_or_else(|| {
-                    crate::error::McpError::InvalidToolParameters(
-                        "Missing required parameter: patch".to_string(),
-                    )
-                })?;
-                let format = args.get("format").and_then(|v| v.as_str());
-
-                crate::operations::patch_file::patch_file(path, patch, format)?;
+            "fileio_edit_file" => {
+                let req: crate::operations::edit_file::EditFileRequest =
+                    serde_json::from_value(serde_json::Value::Object(args.clone()))
+                        .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
+                let result = crate::operations::edit_file::edit_file(req)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
-                        "text": "Patch applied successfully"
+                        "text": serde_json::to_string(&result)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -958,13 +983,11 @@ impl ToolRegistry {
                     .unwrap_or(false);
 
                 let results = crate::operations::cp::cp(&source_refs, destination, recursive)?;
-                let results_value = serde_json::to_value(&results)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": results_value
+                        "type": "text",
+                        "text": serde_json::to_string(&results)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -986,13 +1009,11 @@ impl ToolRegistry {
                     })?;
 
                 let results = crate::operations::mv::mv(&source_refs, destination)?;
-                let results_value = serde_json::to_value(&results)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": results_value
+                        "type": "text",
+                        "text": serde_json::to_string(&results)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -1011,13 +1032,11 @@ impl ToolRegistry {
                 let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
                 let results = crate::operations::rm::rm(&path_refs, recursive, force)?;
-                let results_value = serde_json::to_value(&results)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": results_value
+                        "type": "text",
+                        "text": serde_json::to_string(&results)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
@@ -1035,13 +1054,11 @@ impl ToolRegistry {
                     .unwrap_or(false);
 
                 let results = crate::operations::rmdir::rmdir(&path_refs, recursive)?;
-                let results_value = serde_json::to_value(&results)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
-
                 Ok(serde_json::json!({
                     "content": [{
-                        "type": "json",
-                        "value": results_value
+                        "type": "text",
+                        "text": serde_json::to_string(&results)
+                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
                     }]
                 }))
             }
