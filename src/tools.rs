@@ -19,7 +19,7 @@ impl ToolRegistry {
         serde_json::json!([
             {
                 "name": "fileio_read_lines",
-                "description": "Read lines from a file with flexible windowing options. Use this to read specific line ranges from a file. Supports two modes: (1) start_line/end_line for range-based reading, or (2) start_line/line_count for count-based reading. Line numbers are 1-based. If no parameters are provided, reads the entire file. Returns an array of line objects with line_number and content fields.",
+                "description": "Read lines from a file with flexible windowing options. Use this to read specific line ranges from a file. Supports two modes: (1) start_line/end_line for range-based reading, or (2) start_line/line_count for count-based reading. Line numbers are 1-based. If no parameters are provided, reads the entire file. Returns an array of lines (strings).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -41,7 +41,7 @@ impl ToolRegistry {
                         },
                         "start_offset": {
                             "type": "number",
-                            "description": "Starting byte offset (0-based) as alternative to start_line. Less commonly used."
+                            "description": "Starting line offset (0-based index) as alternative to start_line. Less commonly used."
                         }
                     },
                     "required": ["path"]
@@ -71,7 +71,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_set_permissions",
-                "description": "Set file or directory permissions (chmod equivalent). Use this to change file permissions on Unix-like systems. Accepts octal format strings like '755' (rwxr-xr-x), '0644' (rw-r--r--), etc. The mode string can include or omit the leading zero. Works on files and directories. Can accept a single path string or an array of paths to set permissions on multiple files/directories.",
+                "description": "Set file or directory permissions (chmod equivalent). Use this to change file permissions on Unix-like systems. Accepts octal format strings like '755' (rwxr-xr-x), '0644' (rw-r--r--), etc. The mode string can include or omit the leading zero. Works on files and directories. Accepts an array of paths to set permissions on multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -113,7 +113,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_get_permissions",
-                "description": "Get file or directory permissions (mode) as an octal string. Returns the current permissions in octal format (e.g., '0755', '0644'). Useful for checking current permissions before modifying them or for auditing purposes. Can accept a single path string or an array of paths to get permissions for multiple files/directories.",
+                "description": "Get file or directory permissions (mode) as an octal string. Returns the current permissions in octal format (e.g., '0755', '0644'). Useful for checking current permissions before modifying them or for auditing purposes. Accepts an array of paths to get permissions for multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -147,7 +147,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_stat",
-                "description": "Get comprehensive file or directory statistics. Returns detailed metadata including: size in bytes, file type (file/directory/symlink), permissions (mode) as octal string, timestamps (modified, accessed, created as Unix epoch seconds), and boolean flags (is_file, is_dir, is_symlink). Returns JSON with all available information about the file system entry. Can accept a single path string or an array of paths to get statistics for multiple files/directories.",
+                "description": "Get comprehensive file or directory statistics. Returns detailed metadata including: size in bytes, file type (file/directory/symlink), permissions (mode) as octal string, timestamps (modified, accessed, created as Unix epoch seconds), and boolean flags (is_file, is_dir, is_symlink). Returns JSON with all available information about the file system entry. Accepts an array of paths to get statistics for multiple files/directories. If a path does not exist, returns an entry with exists=false and type=not_found (not an error).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -185,13 +185,13 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_list_directory",
-                "description": "List directory contents with detailed information. Returns an array of entries, each containing: name, full path, entry type (file/directory/symlink), size in bytes, and modified timestamp. Can list recursively to include all subdirectories, and can include or exclude hidden files (those starting with '.'). Useful for directory exploration and file discovery.",
+                "description": "List directory contents with detailed information. Returns an array of entries, each containing: name, full path, entry type (file/directory/symlink), size in bytes, and modified timestamp. Can list recursively to include all subdirectories, and can include or exclude hidden files (those starting with '.'). Useful for directory exploration and file discovery. If the directory does not exist, returns an empty array.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Path to the directory to list. Must exist and be a directory. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to list a specific directory, use an absolute path or verify the working directory first."
+                            "description": "Path to the directory to list. If it does not exist, the result is an empty array. If it exists but is not a directory, the call errors. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to list a specific directory, use an absolute path or verify the working directory first."
                         },
                         "recursive": {
                             "type": "boolean",
@@ -225,7 +225,7 @@ impl ToolRegistry {
                         },
                         "file_type": {
                             "type": "string",
-                            "description": "Filter results by entry type. Options: 'file' (regular files only), 'dir' (directories only), 'symlink' (symbolic links only). If not specified, returns all types.",
+                            "description": "Filter results by entry type. Options: 'file' (regular files only), 'dir' or 'directory' (directories only), 'symlink' (symbolic links only). If not specified, returns all types.",
                             "enum": ["file", "dir", "symlink"]
                         }
                     },
@@ -234,7 +234,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_find_in_files",
-                "description": "Search for text or regex patterns within file contents (like grep/ripgrep). Recursively searches through files, returning matches with file path, line number, column range, and matched text. Supports both literal string matching and full regex patterns. Can filter by file glob patterns, limit search depth, control case sensitivity, and match whole words. Returns detailed match information for each occurrence.",
+                "description": "Search for text or regex patterns within file contents (like grep/ripgrep). Recursively searches through files, returning matches with file path, line number (1-based), column range (0-based), and matched text. Supports both literal string matching and full regex patterns. Can filter by file glob patterns, limit search depth, control case sensitivity, and match whole words. Returns detailed match information for each occurrence.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -298,7 +298,7 @@ impl ToolRegistry {
                         },
                         "edits": {
                             "type": "array",
-                            "description": "Array of edit operations applied in order. Anchor-based ops: insert_after/insert_before/replace/delete require 'search' and optionally 'use_regex', 'occurrence' (1-based), 'require_match'. Line-based ops: insert_at_line requires 'line'; replace_lines/delete_lines require 'start_line' and 'end_line'.",
+                            "description": "Array of edit operations applied in order. Anchor-based ops: insert_after/insert_before/replace/delete require 'search' and optionally 'use_regex', 'occurrence' (1-based), 'require_match'. Line-based ops use 1-based line numbers: insert_at_line requires 'line'; replace_lines/delete_lines require 'start_line' and 'end_line'.",
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -319,9 +319,9 @@ impl ToolRegistry {
                                     "use_regex": {"type": "boolean"},
                                     "occurrence": {"type": "number"},
                                     "require_match": {"type": "boolean"},
-                                    "line": {"type": "number"},
-                                    "start_line": {"type": "number"},
-                                    "end_line": {"type": "number"}
+                                    "line": {"type": "number", "description": "1-based line number"},
+                                    "start_line": {"type": "number", "description": "1-based start line"},
+                                    "end_line": {"type": "number", "description": "1-based end line"}
                                 },
                                 "required": ["op"]
                             }
@@ -547,7 +547,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_change_ownership",
-                "description": "Change file or directory ownership (chown equivalent). Changes the owner and/or group of a file or directory. Currently supports numeric UID/GID only (username/groupname resolution not implemented). At least one of user or group must be provided. Requires appropriate permissions (typically root or file owner). Works on Unix-like systems only. Can accept a single path string or an array of paths to change ownership of multiple files/directories.",
+                "description": "Change file or directory ownership (chown equivalent). Changes the owner and/or group of a file or directory. Currently supports numeric UID/GID only (username/groupname resolution not implemented). If both user and group are omitted, no changes are made (the call still validates paths). Requires appropriate permissions (typically root or file owner). Works on Unix-like systems only. Accepts an array of paths to change ownership of multiple files/directories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -580,24 +580,16 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_count_lines",
-                "description": "Count the number of lines in files. Returns the total line count (newline-separated) for each file. Useful for getting line counts in code files, logs, or any text file. A file with no newlines counts as 1 line. Accepts an array of paths to count lines in multiple files.",
+                "description": "Count the number of lines in files. Returns a result object per path with { path, status, lines, exists }. Useful for getting line counts in code files, logs, or any text file. Empty files return 0 lines; files with content but no trailing newline count as 1 line. Accepts an array of paths to count lines in multiple files.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "path": {
-                            "oneOf": [
-                                {
-                                    "type": "string",
-                                    "description": "Path to the file to count lines in. Must exist and be a file (not directory). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to count lines in a specific file, use an absolute path or verify the working directory first."
-                                },
-                                {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    },
-                                    "description": "Array of paths to files to count lines in. Returns line counts for all files."
-                                }
-                            ]
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Array of paths to files to count lines in. Returns line count results for all files."
                         }
                     },
                     "required": ["path"]
@@ -605,7 +597,7 @@ impl ToolRegistry {
             },
             {
                 "name": "fileio_count_words",
-                "description": "Count the number of words in files. Returns the total word count (whitespace-separated) for each file. Useful for text analysis, document statistics, or content metrics. Words are separated by any whitespace (spaces, tabs, newlines). Accepts an array of paths to count words in multiple files.",
+                "description": "Count the number of words in files. Returns a result object per path with { path, status, words, exists }. Useful for text analysis, document statistics, or content metrics. Words are separated by any whitespace (spaces, tabs, newlines). Accepts an array of paths to count words in multiple files.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
