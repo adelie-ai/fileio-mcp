@@ -624,6 +624,13 @@ fn fileio_stat() {
                 .and_then(|x| x.as_bool()),
             Some(false)
         );
+        assert_eq!(
+            by_path
+                .get(missing.to_string_lossy().as_ref())
+                .and_then(|o| o.get("type"))
+                .and_then(|x| x.as_str()),
+            Some("not_found")
+        );
     });
 }
 
@@ -836,6 +843,25 @@ fn fileio_find_in_files() {
 }
 
 #[test]
+fn fileio_find_files_directory_alias() {
+    run_case("fileio_find_files_directory_alias", |client, root| {
+        let case = case_dir(root, "fileio_find_files_directory_alias");
+        let sub = case.join("subdir");
+        fs::create_dir_all(&sub).unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_files",
+                json!({"pattern": "subdir", "root": case.to_string_lossy(), "file_type": "directory"}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("file_find array");
+        assert!(arr.iter().any(|p| p.as_str() == Some(sub.to_string_lossy().as_ref())));
+    });
+}
+
+#[test]
 fn fileio_find_in_files_case_insensitive() {
     run_case("fileio_find_in_files_case_insensitive", |client, root| {
         let case = case_dir(root, "fileio_find_in_files_case_insensitive");
@@ -874,6 +900,29 @@ fn fileio_find_in_files_whole_word() {
         assert!(arr.iter().any(|m| {
             m.get("file_path").and_then(|p| p.as_str()) == Some(hay.to_string_lossy().as_ref())
         }));
+    });
+}
+
+#[test]
+fn fileio_find_in_files_column_zero_based() {
+    run_case("fileio_find_in_files_column_zero_based", |client, root| {
+        let case = case_dir(root, "fileio_find_in_files_column_zero_based");
+        let hay = case.join("hay.txt");
+        fs::write(&hay, "abc\n").unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_in_files",
+                json!({"path": case.to_string_lossy(), "pattern":"a", "use_regex":false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_in_files array");
+        let m = arr.iter().find(|m| {
+            m.get("file_path").and_then(|p| p.as_str()) == Some(hay.to_string_lossy().as_ref())
+        });
+        let m = m.expect("expected match for hay.txt");
+        assert_eq!(m.get("column_start").and_then(|c| c.as_u64()), Some(0));
     });
 }
 
@@ -1597,6 +1646,58 @@ fn fileio_count_lines_ok() {
                 .and_then(|n| n.as_u64()),
             Some(2)
         );
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("status")
+                .and_then(|s| s.as_str()),
+            Some("ok")
+        );
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("exists")
+                .and_then(|b| b.as_bool()),
+            Some(true)
+        );
+    });
+}
+
+#[test]
+fn fileio_count_lines_empty_file_zero() {
+    run_case("fileio_count_lines_empty_file_zero", |client, root| {
+        let case = case_dir(root, "fileio_count_lines_empty_file_zero");
+        let p = case.join("empty.txt");
+        fs::write(&p, "").unwrap();
+
+        let res = client
+            .tool_call("fileio_count_lines", json!({"path": [p.to_string_lossy()]}))
+            .unwrap();
+        let v = extract_value(&res);
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("lines")
+                .and_then(|n| n.as_u64()),
+            Some(0)
+        );
+    });
+}
+
+#[test]
+fn fileio_count_lines_single_line_no_newline() {
+    run_case("fileio_count_lines_single_line_no_newline", |client, root| {
+        let case = case_dir(root, "fileio_count_lines_single_line_no_newline");
+        let p = case.join("single.txt");
+        fs::write(&p, "single line").unwrap();
+
+        let res = client
+            .tool_call("fileio_count_lines", json!({"path": [p.to_string_lossy()]}))
+            .unwrap();
+        let v = extract_value(&res);
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("lines")
+                .and_then(|n| n.as_u64()),
+            Some(1)
+        );
     });
 }
 
@@ -1649,6 +1750,18 @@ fn fileio_count_words_ok() {
                 .and_then(|n| n.as_u64()),
             Some(3)
         );
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("status")
+                .and_then(|s| s.as_str()),
+            Some("ok")
+        );
+        assert_eq!(
+            v.as_array().unwrap()[0]
+                .get("exists")
+                .and_then(|b| b.as_bool()),
+            Some(true)
+        );
     });
 }
 
@@ -1691,5 +1804,26 @@ fn fileio_change_ownership_skipped_unless_enabled() {
                 json!({"path": [p.to_string_lossy()], "user": uid, "group": gid}),
             )
             .unwrap();
+    });
+}
+
+#[test]
+fn fileio_change_ownership_noop_without_user_group() {
+    if !dangerous_enabled() {
+        return;
+    }
+
+    run_case("fileio_change_ownership_noop_without_user_group", |client, root| {
+        let case = case_dir(root, "fileio_change_ownership_noop_without_user_group");
+        let p = case.join("owned.txt");
+        fs::write(&p, "x").unwrap();
+
+        client
+            .tool_call(
+                "fileio_change_ownership",
+                json!({"path": [p.to_string_lossy()]}),
+            )
+            .unwrap();
+        assert!(p.exists());
     });
 }

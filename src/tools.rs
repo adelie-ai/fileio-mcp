@@ -226,7 +226,7 @@ impl ToolRegistry {
                         "file_type": {
                             "type": "string",
                             "description": "Filter results by entry type. Options: 'file' (regular files only), 'dir' or 'directory' (directories only), 'symlink' (symbolic links only). If not specified, returns all types.",
-                            "enum": ["file", "dir", "symlink"]
+                            "enum": ["file", "dir", "directory", "symlink"]
                         }
                     },
                     "required": ["pattern"]
