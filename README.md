@@ -1,10 +1,17 @@
 # fileio-mcp
 
-A small, fast, and modular Rust service and library that exposes common filesystem operations over a simple IPC/RPC transport for automation, remote tooling, and embedded workflows.
+A small, fast, and modular Rust **MCP server** (plus library) that exposes common filesystem operations over a simple IPC/RPC transport. It is primarily intended for use by **LLM agents** and other automated clients that need safe, auditable file system access.
+
+## Who this is for
+
+- **LLM agent runtimes** that need deterministic, tool-driven file I/O (read, write, edit, list, find).
+- **Automation frameworks** that prefer a single, auditable service boundary for filesystem access.
+- **Editors/CI/sandboxes** that want to delegate file operations to a hardened server.
 
 ## Why use fileio-mcp
 
 - **Automate file operations safely**: Centralize file system actions (copy, move, read, write, mkdir, remove, stat, etc.) behind a single, auditable service.
+- **Built for LLM agents**: Provide a stable MCP tool surface that LLMs can call deterministically for file I/O.
 - **Integrate with tools and editors**: Expose file operations to editors, CI systems, or sandboxes that can't perform certain filesystem tasks directly.
 - **Reduce duplication**: Reuse a single, well-tested implementation of file primitives instead of reimplementing cross-platform behavior in multiple tools.
 - **Rust safety and performance**: Implemented in Rust for predictable performance, strong error handling, and minimal runtime overhead.
@@ -16,9 +23,16 @@ A small, fast, and modular Rust service and library that exposes common filesyst
 - Easier permission and audit controls: operations are centralized and can be observed or limited at the transport layer.
 - Extensible operation set: add or override operations as requirements evolve.
 
+## Key capabilities
+
+- **Deterministic edits**: Structured edit operations (`fileio_edit_file`) avoid fragile patch diffs.
+- **Line-aware reads**: Flexible read APIs with explicit 1-based line numbers.
+- **Search utilities**: File and content search with filters and regex support.
+- **Safe defaults**: Clear error semantics and explicit control over destructive operations.
+
 ## What it is
 
-`fileio-mcp` is both a library and a small server/CLI. It implements a set of canonical filesystem operations as modular, testable units (see the `operations/` folder), and offers transport and server layers to expose those operations to clients via IPC/RPC.
+`fileio-mcp` is both a library and a small **MCP server/CLI**. It implements a set of canonical filesystem operations as modular, testable units (see the `operations/` folder), and exposes those operations as MCP tools over IPC/RPC. The primary use case is **LLM agents** that need reliable, deterministic file operations.
 
 Key components:
 
@@ -70,6 +84,10 @@ To add an operation:
 1. Add a new module in `src/operations/` that implements the operation logic and a small handler interface.
 2. Register the operation in the server dispatch so it can be invoked over the transport.
 3. Add unit tests for happy and error paths.
+
+## Testing
+
+Run the test suite with `cargo test`. For containerized, reproducible runs, see `.github/instructions/testing.instructions.md`.
 
 ## Contributing
 
