@@ -927,6 +927,29 @@ fn fileio_find_in_files_column_zero_based() {
 }
 
 #[test]
+fn fileio_find_in_files_skips_non_utf8_files() {
+    run_case("fileio_find_in_files_skips_non_utf8_files", |client, root| {
+        let case = case_dir(root, "fileio_find_in_files_skips_non_utf8_files");
+        let hay = case.join("hay.txt");
+        let bin = case.join("image.png");
+        fs::write(&hay, "needle\n").unwrap();
+        fs::write(&bin, [0x89u8, 0x50, 0x4E, 0x47, 0xFF]).unwrap();
+
+        let res = client
+            .tool_call(
+                "fileio_find_in_files",
+                json!({"path": case.to_string_lossy(), "pattern":"needle", "use_regex":false}),
+            )
+            .unwrap();
+        let v = extract_value(&res);
+        let arr = v.as_array().expect("find_in_files array");
+        assert!(arr.iter().any(|m| {
+            m.get("file_path").and_then(|p| p.as_str()) == Some(hay.to_string_lossy().as_ref())
+        }));
+    });
+}
+
+#[test]
 fn fileio_edit_file_insert_after_anchor() {
     run_case("fileio_edit_file_insert_after_anchor", |client, root| {
         let case = case_dir(root, "fileio_edit_file_insert_after_anchor");

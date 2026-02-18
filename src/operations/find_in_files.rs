@@ -138,9 +138,14 @@ pub fn find_in_files(
         let mut file_matches = Vec::new();
         let mut line_number = 1u64;
 
-        let content = std::fs::read_to_string(entry_path).map_err(|e| {
+        let content_bytes = std::fs::read(entry_path).map_err(|e| {
             FileIoError::ReadError(format!("Failed to read file {}: {}", file_path, e))
         })?;
+
+        let content = match String::from_utf8(content_bytes) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
 
         for line in content.lines() {
             if let Some(max) = max_count {
@@ -288,5 +293,22 @@ mod tests {
         .unwrap();
 
         assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn test_find_in_files_skips_non_utf8_files() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_str().unwrap();
+
+        fs::write(dir.path().join("text.txt"), "needle in text\n").unwrap();
+        fs::write(dir.path().join("binary.bin"), [0xFFu8, 0x00, 0x80, 0xFE]).unwrap();
+
+        let matches = find_in_files(
+            "needle", root, true, false, None, None, false, None, None, false, false,
+        )
+        .unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].file_path.ends_with("text.txt"));
     }
 }
