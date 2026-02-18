@@ -76,7 +76,7 @@ pub fn rmdir_single(path: &str, recursive: bool) -> Result<()> {
 
     // Use rm::rm which now returns per-path results; translate single-entry result to Result<()> for callers
     let results = rm::rm(&[&expanded_path], recursive, false)?;
-    if let Some(r) = results.get(0) {
+    if let Some(r) = results.first() {
         if r.status == "ok" {
             Ok(())
         } else {

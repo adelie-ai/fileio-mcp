@@ -685,7 +685,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&lines)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -754,7 +754,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&modes)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -793,7 +793,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&stat_json_array)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -842,7 +842,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&entries_json)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -870,7 +870,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&matches_json)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -935,21 +935,21 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&matches_json)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
             "fileio_edit_file" => {
                 let req: crate::operations::edit_file::EditFileRequest =
                     serde_json::from_value(serde_json::Value::Object(args.clone()))
-                        .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
+                        .map_err(crate::error::FileIoMcpError::Json)?;
                 let result = crate::operations::edit_file::edit_file(req)?;
 
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&result)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -979,7 +979,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&results)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -1005,7 +1005,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&results)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -1028,7 +1028,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&results)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -1050,7 +1050,7 @@ impl ToolRegistry {
                     "content": [{
                         "type": "text",
                         "text": serde_json::to_string(&results)
-                            .map_err(|e| crate::error::FileIoMcpError::Json(e))?
+                            .map_err(crate::error::FileIoMcpError::Json)?
                     }]
                 }))
             }
@@ -1234,7 +1234,7 @@ impl ToolRegistry {
 
                 let counts = crate::operations::count_lines::count_lines(&path_refs)?;
                 let counts_json = serde_json::to_string(&counts)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
+                    .map_err(crate::error::FileIoMcpError::Json)?;
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1254,7 +1254,7 @@ impl ToolRegistry {
 
                 let counts = crate::operations::count_words::count_words(&path_refs)?;
                 let counts_json = serde_json::to_string(&counts)
-                    .map_err(|e| crate::error::FileIoMcpError::Json(e))?;
+                    .map_err(crate::error::FileIoMcpError::Json)?;
 
                 Ok(serde_json::json!({
                     "content": [{

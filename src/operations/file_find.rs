@@ -26,7 +26,7 @@ pub fn file_find(
         .transpose()?;
     let root_path = expanded_root
         .as_ref()
-        .map(|r| Path::new(r))
+        .map(Path::new)
         .unwrap_or_else(|| Path::new("."));
 
     if !root_path.exists() {
@@ -48,11 +48,11 @@ pub fn file_find(
             .replace("*", ".*")
             .replace("?", ".");
         regex::Regex::new(&format!("^{}$", regex_str))
-            .map_err(|e| FileIoError::RegexError(e.into()))?
+            .map_err(|e| FileIoError::RegexError(e))?
     } else {
         // Simple substring match
-        regex::Regex::new(&format!("{}", regex::escape(pattern)))
-            .map_err(|e| FileIoError::RegexError(e.into()))?
+        regex::Regex::new(&regex::escape(pattern).to_string())
+            .map_err(|e| FileIoError::RegexError(e))?
     };
 
     let mut matches = Vec::new();

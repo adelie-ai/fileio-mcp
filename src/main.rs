@@ -181,14 +181,12 @@ async fn handle_websocket_connection(socket: axum::extract::ws::WebSocket, serve
                 let response = handle_jsonrpc_message(Arc::clone(&server), message).await;
 
                 // Send response if present
-                if let Some(resp) = response {
-                    if let Ok(resp_str) = serde_json::to_string(&resp) {
-                        if let Err(e) = sender.send(Message::Text(resp_str.into())).await {
+                if let Some(resp) = response
+                    && let Ok(resp_str) = serde_json::to_string(&resp)
+                        && let Err(e) = sender.send(Message::Text(resp_str.into())).await {
                             eprintln!("Error sending WebSocket response: {}", e);
                             break;
                         }
-                    }
-                }
             }
             Ok(Message::Close(_)) => {
                 break;
@@ -204,13 +202,12 @@ async fn handle_websocket_connection(socket: axum::extract::ws::WebSocket, serve
 
 async fn handle_jsonrpc_message(server: Arc<McpServer>, message: Value) -> Option<Value> {
     // Validate JSON-RPC version (if present)
-    if let Some(jsonrpc_version) = message.get("jsonrpc").and_then(|v| v.as_str()) {
-        if jsonrpc_version != "2.0" {
+    if let Some(jsonrpc_version) = message.get("jsonrpc").and_then(|v| v.as_str())
+        && jsonrpc_version != "2.0" {
             let id = message.get("id").cloned();
             let error_msg = format!("Invalid JSON-RPC version: {}", jsonrpc_version);
             return Some(jsonrpc_error_response(id, -32600, &error_msg, None));
         }
-    }
 
     // Extract JSON-RPC fields
     let id = message.get("id").cloned();

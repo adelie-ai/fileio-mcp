@@ -58,11 +58,10 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
             FileIoError::ReadError(format!("Failed to read directory entry: {}", e))
         })?;
         let entry_path = entry.path();
-        if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) {
-            if matcher.is_match(file_name) {
+        if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+            && matcher.is_match(file_name) {
                 matches.push(entry_path);
             }
-        }
     }
 
     Ok(matches)

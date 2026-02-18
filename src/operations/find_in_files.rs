@@ -69,7 +69,7 @@ pub fn find_in_files(
         builder.multi_line(multiline);
         builder.build()
     }
-    .map_err(|e| FileIoError::RegexError(e))?;
+    .map_err(FileIoError::RegexError)?;
 
     let mut matches = Vec::new();
     let mut file_match_counts: std::collections::HashMap<String, u64> =
@@ -95,7 +95,7 @@ pub fn find_in_files(
                 .path()
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |name| glob_matcher.is_match(name))
+                .is_some_and(|name| glob_matcher.is_match(name))
         });
     }
 
@@ -109,7 +109,7 @@ pub fn find_in_files(
                 .path()
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |name| exclude_matcher.is_match(name))
+                .is_some_and(|name| exclude_matcher.is_match(name))
         });
     }
 
