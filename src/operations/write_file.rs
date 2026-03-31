@@ -52,18 +52,30 @@ pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
             ))
         })?;
     } else {
-        // Atomic write: write to temp file, then rename
-        let temp_path = format!("{}.tmp", expanded_path);
-        fs::write(&temp_path, content).map_err(|e| {
+        // Atomic write: write to a secure temp file, then persist (rename).
+        // Using tempfile::NamedTempFile avoids predictable temp filenames
+        // that could be exploited via symlink attacks.
+        let parent = path_obj.parent().unwrap_or(Path::new("."));
+        let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
             crate::error::FileIoMcpError::from(FileIoError::from_io_error(
-                "write to temp file",
-                &temp_path,
+                "create temp file",
+                &expanded_path,
                 e,
             ))
         })?;
-        fs::rename(&temp_path, &expanded_path).map_err(|e| {
+        {
+            use std::io::Write;
+            tmp.write_all(content.as_bytes()).map_err(|e| {
+                crate::error::FileIoMcpError::from(FileIoError::from_io_error(
+                    "write to temp file",
+                    &expanded_path,
+                    e,
+                ))
+            })?;
+        }
+        tmp.persist(&expanded_path).map_err(|e| {
             use std::io::ErrorKind;
-            match e.kind() {
+            match e.error.kind() {
                 ErrorKind::PermissionDenied => {
                     crate::error::FileIoMcpError::from(FileIoError::PermissionDenied(format!(
                         "Permission denied when writing file: {}",
@@ -72,8 +84,8 @@ pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
                 }
                 _ => crate::error::FileIoMcpError::from(FileIoError::from_io_error(
                     "rename temp file",
-                    &format!("{} to {}", temp_path, expanded_path),
-                    e,
+                    &expanded_path,
+                    e.error,
                 )),
             }
         })?;

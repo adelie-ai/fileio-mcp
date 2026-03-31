@@ -225,10 +225,22 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
         })?;
         let path = entry.path();
         let file_name = entry.file_name();
-
         let dest_path = dst.join(&file_name);
 
-        if path.is_dir() {
+        // Use symlink_metadata to detect symlinks without following them.
+        // Skip symlinks to prevent escaping directory boundaries.
+        let meta = fs::symlink_metadata(&path).map_err(|e| {
+            FileIoError::ReadError(format!(
+                "Failed to read metadata for {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        if meta.file_type().is_symlink() {
+            // Skip symlinks to avoid copying files outside the source tree.
+            continue;
+        } else if meta.is_dir() {
             copy_dir_all(&path, &dest_path)?;
         } else {
             fs::copy(&path, &dest_path).map_err(|e| {
