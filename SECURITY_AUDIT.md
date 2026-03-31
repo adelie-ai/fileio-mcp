@@ -65,12 +65,6 @@ Symlinks and hard links can point anywhere without validation.
 
 ---
 
-## Resolved (2026-03-31)
-
-- Predictable temp files — replaced with `tempfile::NamedTempFile` for atomic writes
-- Recursive copy symlink following — `symlink_metadata()` skips symlinks in `copy_dir_all`
-- File size limits — 100 MiB check before reading files into memory
-
 ## Positive Findings
 
 - No `unsafe` blocks
