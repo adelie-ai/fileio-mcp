@@ -48,23 +48,22 @@ impl PathGuard {
         extra_paths: &[String],
         block_file: Option<&str>,
     ) -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/nonexistent".into());
         let mut entries = Vec::new();
 
         // Load hardcoded defaults
         for pattern in DEFAULT_DENY {
-            Self::add_pattern(&mut entries, pattern, &home);
+            Self::add_pattern(&mut entries, pattern);
         }
 
         // Load CLI extras
         for pattern in extra_paths {
-            Self::add_pattern(&mut entries, pattern, &home);
+            Self::add_pattern(&mut entries, pattern);
         }
 
         // Load blocklist file
         if let Some(file_path) = block_file {
-            // The blocklist file itself is denied
-            let expanded = file_path.replace('~', &home);
+            // The blocklist file itself is denied.
+            let expanded = shellexpand::tilde(file_path).into_owned();
             entries.push(DenyEntry::File(PathBuf::from(&expanded)));
 
             if let Ok(contents) = std::fs::read_to_string(&expanded) {
@@ -73,7 +72,7 @@ impl PathGuard {
                     if line.is_empty() || line.starts_with('#') {
                         continue;
                     }
-                    Self::add_pattern(&mut entries, line, &home);
+                    Self::add_pattern(&mut entries, line);
                 }
             } else {
                 eprintln!("warning: could not read block-file: {}", file_path);
@@ -83,8 +82,11 @@ impl PathGuard {
         Self { entries }
     }
 
-    fn add_pattern(entries: &mut Vec<DenyEntry>, pattern: &str, home: &str) {
-        let expanded = pattern.replace('~', home);
+    fn add_pattern(entries: &mut Vec<DenyEntry>, pattern: &str) {
+        // `shellexpand::tilde` rather than `pattern.replace('~', home)` — the
+        // literal replace substitutes every `~` in the string, not just a
+        // leading one, which is a footgun for patterns that contain `~` mid-path.
+        let expanded = shellexpand::tilde(pattern).into_owned();
         if expanded.ends_with('/') {
             entries.push(DenyEntry::Directory(PathBuf::from(&expanded)));
         } else {
@@ -92,10 +94,18 @@ impl PathGuard {
         }
     }
 
-    /// Check if a path is denied. The path should already be shell-expanded.
-    /// Canonicalizes (resolves symlinks) before checking.
+    /// Check if a path is denied.
+    ///
+    /// Tilde-expands the input before canonicalizing so callers can pass paths
+    /// like `~/.ssh/id_rsa` directly. Without this expansion, an adversarial
+    /// caller could bypass the deny-list by passing `~/...` strings — the
+    /// downstream operation crate calls `shellexpand::full` after the guard
+    /// check and accesses the real file (issue #2). $HOME / env-var inputs are
+    /// not handled here because env vars are part of the trusted startup
+    /// environment, not attacker-controlled.
     pub fn is_denied(&self, path: &str) -> bool {
-        let canonical = canonicalize_best_effort(path);
+        let expanded = shellexpand::tilde(path);
+        let canonical = canonicalize_best_effort(expanded.as_ref());
         self.is_denied_canonical(&canonical)
     }
 
@@ -296,5 +306,57 @@ mod tests {
     fn tilde_expansion_in_deny_list() {
         let guard = PathGuard::new(&["~/custom-secret.txt".into()], None);
         assert!(guard.is_denied(&format!("{}/custom-secret.txt", home())));
+    }
+
+    /// Regression: an adversarial caller passing a tilde-prefixed *input* to
+    /// `is_denied` must still be denied. Without input-side expansion, the
+    /// downstream operations crate calls `shellexpand::full` after the guard
+    /// check and accesses the real file (issue #2).
+    #[test]
+    fn denies_tilde_prefixed_input() {
+        let guard = PathGuard::default();
+        assert!(
+            guard.is_denied("~/.ssh/id_ed25519"),
+            "tilde-prefixed inputs must be expanded before matching"
+        );
+        assert!(guard.is_denied("~/.aws/credentials"));
+        assert!(guard.is_denied("~/.config/desktop-assistant/secrets.toml"));
+        assert!(guard.is_denied("~/.netrc"));
+    }
+
+    /// Regression: an extra-path pattern set via `~/...` must match both the
+    /// tilde-prefixed input form *and* the absolute form.
+    #[test]
+    fn pattern_input_symmetry_for_tilde() {
+        let guard = PathGuard::new(&["~/private/".into()], None);
+        assert!(
+            guard.is_denied("~/private/file.txt"),
+            "tilde input must match tilde pattern"
+        );
+        assert!(
+            guard.is_denied(&format!("{}/private/file.txt", home())),
+            "absolute input must match tilde pattern"
+        );
+    }
+
+    /// Allowed tilde-prefixed inputs stay allowed.
+    #[test]
+    fn allows_tilde_prefixed_safe_paths() {
+        let guard = PathGuard::default();
+        assert!(!guard.is_denied("~/projects/foo.rs"));
+        assert!(!guard.is_denied("~/Documents/report.md"));
+    }
+
+    /// `~` mid-path is not expanded by `shellexpand::tilde` — it only expands
+    /// a leading `~`. Verify a pattern like `/tmp/~foo/` is stored verbatim,
+    /// not silently rewritten to `/tmp/<home>foo/` (which the previous
+    /// `replace('~', home)` implementation would have done).
+    #[test]
+    fn mid_path_tilde_in_pattern_is_literal() {
+        let guard = PathGuard::new(&["/tmp/~tilde-dir/".into()], None);
+        assert!(guard.is_denied("/tmp/~tilde-dir/file.txt"));
+        // The misexpansion that would have happened with the old code:
+        let misexpanded = format!("/tmp/{}foo/", home());
+        assert!(!guard.is_denied(&misexpanded));
     }
 }
