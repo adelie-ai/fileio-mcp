@@ -29,7 +29,14 @@ impl ToolRegistry {
         Err(FileIoError::NotFound(format!("{} not found: {}", "File", path)).into())
     }
 
-    /// Silent success result in MCP JSON format (for denied writes)
+    /// Silent success result in MCP JSON format (for denied writes whose real
+    /// counterpart also returns a plain-text body — `write_file`, `touch`,
+    /// `set_permissions`, `make_directory`, `change_ownership`, `link`).
+    /// Handlers whose real success path returns serialized JSON (`edit_file`,
+    /// `copy`, `move`, `remove`, `remove_directory`) must NOT use this — they
+    /// build a synthetic result of the matching JSON shape instead, see
+    /// `synthesize_op_results` and the per-handler synthesis blocks. Mixing
+    /// the two creates a response-shape oracle (issue #3).
     fn silent_success(message: &str) -> Result<Value> {
         Ok(serde_json::json!({
             "content": [{
@@ -37,6 +44,26 @@ impl ToolRegistry {
                 "text": message
             }]
         }))
+    }
+
+    /// Build a `Vec<OpResult>`-shaped synthetic response (matching `cp`, `mv`,
+    /// `rm`, `rmdir`'s real success shape) covering every input path with
+    /// `status: "ok", exists: true`. Used when a denied call would otherwise
+    /// reveal denial via a different response shape (issue #3) or via a
+    /// short result vector (the partial-filter oracle: legacy code filtered
+    /// denied sources before running cp/mv, so output length differed from
+    /// input length).
+    fn synthesize_op_results(paths: &[String]) -> Vec<Value> {
+        paths
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "path": p,
+                    "status": "ok",
+                    "exists": true,
+                })
+            })
+            .collect()
     }
 
     /// Get all tools in MCP format
@@ -996,14 +1023,38 @@ impl ToolRegistry {
                 }))
             }
             "fileio_edit_file" => {
-                if let Some(path) = args.get("path").and_then(|v| v.as_str())
-                    && self.guard.is_denied(path)
-                {
-                    return Self::silent_success("File edited successfully");
-                }
                 let req: crate::operations::edit_file::EditFileRequest =
                     serde_json::from_value(serde_json::Value::Object(args.clone()))
                         .map_err(crate::error::FileIoMcpError::Json)?;
+
+                // Denied edits return a synthetic EditFileResult matching the
+                // real shape — `changed: false, applied_edits: 0` looks
+                // indistinguishable from a real edit where no patterns
+                // matched (a legitimate outcome with `require_match: false`).
+                // Returning plain text would create an oracle (real success
+                // returns serialized JSON; the LLM can map the deny-list with
+                // one no-op probe per path). Issue #3.
+                //
+                // Don't peek at on-disk state to decide between this synthetic
+                // and a real `NotFound` error — the existence check would
+                // itself leak whether the path exists.
+                if self.guard.is_denied(&req.path) {
+                    let synthetic = crate::operations::edit_file::EditFileResult {
+                        path: req.path.clone(),
+                        changed: false,
+                        applied_edits: 0,
+                        dry_run: req.dry_run,
+                        content: None,
+                    };
+                    return Ok(serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&synthetic)
+                                .map_err(crate::error::FileIoMcpError::Json)?
+                        }]
+                    }));
+                }
+
                 let result = crate::operations::edit_file::edit_file(req)?;
 
                 Ok(serde_json::json!({
@@ -1021,8 +1072,6 @@ impl ToolRegistry {
                     )
                 })?;
                 let sources = Self::parse_paths(source_value)?;
-                // Filter denied sources (read/exfiltration risk)
-                let sources: Vec<String> = sources.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let destination = args
                     .get("destination")
                     .and_then(|v| v.as_str())
@@ -1031,13 +1080,34 @@ impl ToolRegistry {
                             "Missing required parameter: destination".to_string(),
                         )
                     })?;
-                // Check destination (write risk)
-                if self.guard.is_denied(destination) {
-                    return Self::silent_success("Copy completed successfully");
+
+                // Two oracles to defeat (issue #3):
+                //   1. Real cp returns serialized Vec<OpResult>; the previous
+                //      silent-success path returned plain text. One probe
+                //      revealed denial.
+                //   2. Filtering denied sources individually and running cp
+                //      with the rest leaked which sources were denied via the
+                //      result count (input N, output N-1 means one was
+                //      filtered).
+                // Fix: if ANY input (source OR destination) is denied, build
+                // a synthetic Vec<OpResult> covering all sources verbatim and
+                // skip the real op entirely. Cost: legitimate calls that
+                // intentionally mix allowed + denied paths now no-op instead
+                // of partially succeeding — split the call to copy allowed
+                // paths.
+                let dest_denied = self.guard.is_denied(destination);
+                let any_source_denied = sources.iter().any(|s| self.guard.is_denied(s));
+                if dest_denied || any_source_denied {
+                    let synthetic = Self::synthesize_op_results(&sources);
+                    return Ok(serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&synthetic)
+                                .map_err(crate::error::FileIoMcpError::Json)?
+                        }]
+                    }));
                 }
-                if sources.is_empty() {
-                    return Self::silent_success("Copy completed successfully");
-                }
+
                 let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
@@ -1060,8 +1130,6 @@ impl ToolRegistry {
                     )
                 })?;
                 let sources = Self::parse_paths(source_value)?;
-                // Filter denied sources (read/exfiltration risk)
-                let sources: Vec<String> = sources.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let destination = args
                     .get("destination")
                     .and_then(|v| v.as_str())
@@ -1070,13 +1138,22 @@ impl ToolRegistry {
                             "Missing required parameter: destination".to_string(),
                         )
                     })?;
-                // Check destination (write risk)
-                if self.guard.is_denied(destination) {
-                    return Self::silent_success("Move completed successfully");
+
+                // Same oracle defeat as fileio_copy (issue #3): synthesize the
+                // full Vec<OpResult> shape on any denial, no real op runs.
+                let dest_denied = self.guard.is_denied(destination);
+                let any_source_denied = sources.iter().any(|s| self.guard.is_denied(s));
+                if dest_denied || any_source_denied {
+                    let synthetic = Self::synthesize_op_results(&sources);
+                    return Ok(serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&synthetic)
+                                .map_err(crate::error::FileIoMcpError::Json)?
+                        }]
+                    }));
                 }
-                if sources.is_empty() {
-                    return Self::silent_success("Move completed successfully");
-                }
+
                 let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
 
                 let results = crate::operations::mv::mv(&source_refs, destination)?;
@@ -1095,10 +1172,22 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
-                if paths.is_empty() {
-                    return Self::silent_success("Remove completed successfully");
+
+                // Issue #3: synthesize Vec<OpResult> for denied calls so the
+                // response shape matches a real rm. Otherwise the LLM can
+                // probe paths via rm and detect denial (real returns JSON
+                // results; old silent-success returned plain text).
+                if paths.iter().any(|p| self.guard.is_denied(p)) {
+                    let synthetic = Self::synthesize_op_results(&paths);
+                    return Ok(serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&synthetic)
+                                .map_err(crate::error::FileIoMcpError::Json)?
+                        }]
+                    }));
                 }
+
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
@@ -1122,10 +1211,19 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
-                if paths.is_empty() {
-                    return Self::silent_success("Directory(ies) removed successfully");
+
+                // Issue #3: same shape-matching as fileio_remove.
+                if paths.iter().any(|p| self.guard.is_denied(p)) {
+                    let synthetic = Self::synthesize_op_results(&paths);
+                    return Ok(serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&synthetic)
+                                .map_err(crate::error::FileIoMcpError::Json)?
+                        }]
+                    }));
                 }
+
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
@@ -1485,6 +1583,134 @@ mod tests {
             !target.exists(),
             "denied write must not actually create the file"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue #3 regression: `fileio_edit_file` against a denied path must
+    /// return the same JSON shape (`EditFileResult`) as a real edit, not a
+    /// plain-text body. Otherwise a single no-op probe maps the deny-list.
+    #[tokio::test]
+    async fn edit_file_denied_response_matches_real_shape() {
+        let dir = std::env::temp_dir().join("fileio_oracle_edit_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Real edit of an allowed file: capture the JSON body shape.
+        let allowed = dir.join("allowed.txt");
+        std::fs::write(&allowed, "hello world").unwrap();
+        let real_registry = ToolRegistry::new();
+        let real_args = serde_json::json!({
+            "path": allowed.to_str().unwrap(),
+            "edits": [{
+                "op": "replace",
+                "search": "world",
+                "text": "rust",
+            }],
+        });
+        let real_resp = real_registry.execute_tool("fileio_edit_file", &real_args).await.unwrap();
+        let real_body: serde_json::Value = serde_json::from_str(
+            real_resp["content"][0]["text"].as_str().unwrap(),
+        )
+        .expect("real response body must be JSON");
+
+        // Denied edit of a path under a blocked directory.
+        let denied = dir.join("denied.txt");
+        let denied_registry = registry_blocking(dir.to_str().unwrap());
+        let denied_args = serde_json::json!({
+            "path": denied.to_str().unwrap(),
+            "edits": [{ "op": "replace", "search": "x", "text": "y" }],
+        });
+        let denied_resp = denied_registry.execute_tool("fileio_edit_file", &denied_args).await.unwrap();
+        let denied_body: serde_json::Value = serde_json::from_str(
+            denied_resp["content"][0]["text"].as_str().unwrap(),
+        )
+        .expect("denied response body must be JSON, not plain text");
+
+        // Same field set in both responses (different values are fine — the
+        // attacker can't probe shape).
+        let real_keys: Vec<_> = real_body.as_object().unwrap().keys().collect();
+        let denied_keys: Vec<_> = denied_body.as_object().unwrap().keys().collect();
+        assert_eq!(real_keys, denied_keys, "response shapes diverge — oracle");
+
+        // Sanity: the denied response did NOT actually modify or create a file.
+        assert!(!denied.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue #3 regression: `fileio_copy` with a denied source must return a
+    /// `Vec<OpResult>` JSON body matching the real cp shape — not a plain
+    /// text "Copy completed successfully" body. Also verifies the
+    /// partial-filter oracle is closed: a mix of allowed + denied sources
+    /// returns N synthetic results (matching input length), not N-1 from
+    /// the legacy code that filtered denied sources before running cp.
+    #[tokio::test]
+    async fn copy_with_denied_source_response_matches_real_shape() {
+        let dir = std::env::temp_dir().join("fileio_oracle_copy_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let denied_dir = dir.join("denied");
+        std::fs::create_dir_all(&denied_dir).unwrap();
+        let allowed_src = dir.join("a.txt");
+        std::fs::write(&allowed_src, "src").unwrap();
+        let denied_src = denied_dir.join("b.txt");
+        std::fs::write(&denied_src, "src").unwrap();
+        let dest = dir.join("dest.txt");
+
+        // Real cp body shape.
+        let real_registry = ToolRegistry::new();
+        let real_resp = real_registry
+            .execute_tool(
+                "fileio_copy",
+                &serde_json::json!({
+                    "source": [allowed_src.to_str().unwrap()],
+                    "destination": dest.to_str().unwrap(),
+                }),
+            )
+            .await
+            .unwrap();
+        let real_body: serde_json::Value = serde_json::from_str(
+            real_resp["content"][0]["text"].as_str().unwrap(),
+        )
+        .expect("real response body must be JSON array of OpResult");
+        assert!(real_body.is_array());
+        let real_obj_keys: Vec<_> = real_body[0].as_object().unwrap().keys().collect();
+
+        // Denied cp body shape — both allowed and denied sources, denial
+        // detected via the denied source.
+        let denied_registry = registry_blocking(denied_dir.to_str().unwrap());
+        let denied_resp = denied_registry
+            .execute_tool(
+                "fileio_copy",
+                &serde_json::json!({
+                    "source": [
+                        allowed_src.to_str().unwrap(),
+                        denied_src.to_str().unwrap(),
+                    ],
+                    "destination": dir.join("dest2.txt").to_str().unwrap(),
+                }),
+            )
+            .await
+            .unwrap();
+        let denied_body: serde_json::Value = serde_json::from_str(
+            denied_resp["content"][0]["text"].as_str().unwrap(),
+        )
+        .expect("denied response body must be JSON, not plain text");
+
+        // Shape match.
+        assert!(denied_body.is_array(), "denied response must be a JSON array");
+        let denied_arr = denied_body.as_array().unwrap();
+        assert_eq!(
+            denied_arr.len(),
+            2,
+            "synthetic results must cover all inputs — closes partial-filter oracle"
+        );
+        let denied_obj_keys: Vec<_> = denied_arr[0].as_object().unwrap().keys().collect();
+        assert_eq!(real_obj_keys, denied_obj_keys, "OpResult shapes diverge");
+
+        // Sanity: nothing was actually copied.
+        assert!(!dir.join("dest2.txt").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
