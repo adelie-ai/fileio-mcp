@@ -10,6 +10,7 @@ use axum::{
 };
 use clap::{Parser, ValueEnum};
 use fileio_mcp::error::Result;
+use fileio_mcp::path_guard::PathGuard;
 use fileio_mcp::server::McpServer;
 use fileio_mcp::transport::StdioTransportHandler;
 use serde_json::Value;
@@ -59,6 +60,12 @@ enum Commands {
         /// Host for WebSocket mode (ignored for stdio)
         #[arg(long, default_value = "0.0.0.0")]
         host: String,
+        /// Additional paths to block (repeatable). Trailing / means directory prefix.
+        #[arg(long = "block-path")]
+        block_paths: Vec<String>,
+        /// File containing additional paths to block (one per line, # comments).
+        #[arg(long = "block-file")]
+        block_file: Option<String>,
     },
 }
 
@@ -67,9 +74,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve { mode, port, host } => {
-            // Create server
-            let server = McpServer::new();
+        Commands::Serve {
+            mode,
+            port,
+            host,
+            block_paths,
+            block_file,
+        } => {
+            let guard = PathGuard::new(&block_paths, block_file.as_deref());
+            let server = McpServer::with_guard(guard);
 
             match mode {
                 TransportMode::Stdio => run_stdio_server(server).await?,

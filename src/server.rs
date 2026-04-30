@@ -3,6 +3,7 @@
 // MCP server implementation
 
 use crate::error::{McpError, Result};
+use crate::path_guard::PathGuard;
 use crate::tools::ToolRegistry;
 use serde_json::Value;
 use std::sync::Arc;
@@ -21,6 +22,14 @@ impl McpServer {
     pub fn new() -> Self {
         Self {
             tool_registry: Arc::new(ToolRegistry::new()),
+            initialized: Arc::new(RwLock::new(false)),
+        }
+    }
+
+    /// Create a new MCP server with a specific path guard
+    pub fn with_guard(guard: PathGuard) -> Self {
+        Self {
+            tool_registry: Arc::new(ToolRegistry::with_guard(guard)),
             initialized: Arc::new(RwLock::new(false)),
         }
     }

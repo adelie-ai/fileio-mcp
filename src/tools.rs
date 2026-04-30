@@ -2,16 +2,41 @@
 
 // Tool registry and MCP tool definitions
 
-use crate::error::Result;
+use crate::error::{FileIoError, Result};
+use crate::path_guard::PathGuard;
 use serde_json::Value;
 
 /// Tool registry that manages all available tools
-pub struct ToolRegistry;
+pub struct ToolRegistry {
+    guard: PathGuard,
+}
 
 impl ToolRegistry {
-    /// Create a new tool registry
+    /// Create a new tool registry with default path guard
     pub fn new() -> Self {
-        Self
+        Self {
+            guard: PathGuard::default(),
+        }
+    }
+
+    /// Create a new tool registry with a specific path guard
+    pub fn with_guard(guard: PathGuard) -> Self {
+        Self { guard }
+    }
+
+    /// "File not found" error result in MCP JSON format
+    fn not_found_error(path: &str) -> Result<Value> {
+        Err(FileIoError::NotFound(format!("{} not found: {}", "File", path)).into())
+    }
+
+    /// Silent success result in MCP JSON format (for denied writes)
+    fn silent_success(message: &str) -> Result<Value> {
+        Ok(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": message
+            }]
+        }))
     }
 
     /// Get all tools in MCP format
@@ -668,6 +693,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
                 let start_line = Self::parse_optional_u64(args, "start_line")?;
                 let end_line = Self::parse_optional_u64(args, "end_line")?;
                 let line_count = Self::parse_optional_u64(args, "line_count")?;
@@ -695,6 +723,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::silent_success("File written successfully");
+                }
                 let content = args
                     .get("content")
                     .and_then(|v| v.as_str())
@@ -724,6 +755,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                if paths.is_empty() {
+                    return Self::silent_success("File mode set successfully");
+                }
                 let mode = args.get("mode").and_then(|v| v.as_str()).ok_or_else(|| {
                     crate::error::McpError::InvalidToolParameters(
                         "Missing required parameter: mode".to_string(),
@@ -747,6 +782,7 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
@@ -765,6 +801,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                if paths.is_empty() {
+                    return Self::silent_success("File(s) touched successfully");
+                }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 crate::operations::touch::touch(&path_refs)?;
@@ -783,6 +823,7 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let stat_results = crate::operations::stat::stat(&path_refs)?;
@@ -804,6 +845,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                if paths.is_empty() {
+                    return Self::silent_success("Directory(ies) created successfully");
+                }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
@@ -825,6 +870,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
                 let recursive = args
                     .get("recursive")
                     .and_then(|v| v.as_bool())
@@ -856,6 +904,11 @@ impl ToolRegistry {
                         )
                     })?;
                 let root = args.get("root").and_then(|v| v.as_str());
+                if let Some(root_path) = root
+                    && self.guard.is_denied(root_path)
+                {
+                    return Self::not_found_error(root_path);
+                }
                 let max_depth = args
                     .get("max_depth")
                     .and_then(|v| v.as_u64())
@@ -888,6 +941,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
                 let case_sensitive = args
                     .get("case_sensitive")
                     .and_then(|v| v.as_bool())
@@ -940,6 +996,11 @@ impl ToolRegistry {
                 }))
             }
             "fileio_edit_file" => {
+                if let Some(path) = args.get("path").and_then(|v| v.as_str())
+                    && self.guard.is_denied(path)
+                {
+                    return Self::silent_success("File edited successfully");
+                }
                 let req: crate::operations::edit_file::EditFileRequest =
                     serde_json::from_value(serde_json::Value::Object(args.clone()))
                         .map_err(crate::error::FileIoMcpError::Json)?;
@@ -960,7 +1021,8 @@ impl ToolRegistry {
                     )
                 })?;
                 let sources = Self::parse_paths(source_value)?;
-                let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
+                // Filter denied sources (read/exfiltration risk)
+                let sources: Vec<String> = sources.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let destination = args
                     .get("destination")
                     .and_then(|v| v.as_str())
@@ -969,6 +1031,14 @@ impl ToolRegistry {
                             "Missing required parameter: destination".to_string(),
                         )
                     })?;
+                // Check destination (write risk)
+                if self.guard.is_denied(destination) {
+                    return Self::silent_success("Copy completed successfully");
+                }
+                if sources.is_empty() {
+                    return Self::silent_success("Copy completed successfully");
+                }
+                let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
                     .and_then(|v| v.as_bool())
@@ -990,7 +1060,8 @@ impl ToolRegistry {
                     )
                 })?;
                 let sources = Self::parse_paths(source_value)?;
-                let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
+                // Filter denied sources (read/exfiltration risk)
+                let sources: Vec<String> = sources.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let destination = args
                     .get("destination")
                     .and_then(|v| v.as_str())
@@ -999,6 +1070,14 @@ impl ToolRegistry {
                             "Missing required parameter: destination".to_string(),
                         )
                     })?;
+                // Check destination (write risk)
+                if self.guard.is_denied(destination) {
+                    return Self::silent_success("Move completed successfully");
+                }
+                if sources.is_empty() {
+                    return Self::silent_success("Move completed successfully");
+                }
+                let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
 
                 let results = crate::operations::mv::mv(&source_refs, destination)?;
                 Ok(serde_json::json!({
@@ -1016,6 +1095,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                if paths.is_empty() {
+                    return Self::silent_success("Remove completed successfully");
+                }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
@@ -1039,6 +1122,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                if paths.is_empty() {
+                    return Self::silent_success("Directory(ies) removed successfully");
+                }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = args
                     .get("recursive")
@@ -1068,6 +1155,12 @@ impl ToolRegistry {
                                 "Missing required parameter: link_path".to_string(),
                             )
                         })?;
+                if self.guard.is_denied(target) {
+                    return Self::not_found_error(target);
+                }
+                if self.guard.is_denied(link_path) {
+                    return Self::silent_success("Hard link created successfully");
+                }
 
                 crate::operations::link::hard_link(target, link_path)?;
 
@@ -1092,6 +1185,12 @@ impl ToolRegistry {
                                 "Missing required parameter: link_path".to_string(),
                             )
                         })?;
+                if self.guard.is_denied(target) {
+                    return Self::not_found_error(target);
+                }
+                if self.guard.is_denied(link_path) {
+                    return Self::silent_success("Symbolic link created successfully");
+                }
 
                 crate::operations::link::symlink(target, link_path)?;
 
@@ -1108,6 +1207,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
 
                 let basename = crate::operations::path_utils::basename(path)?;
 
@@ -1124,6 +1226,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
 
                 let dirname = crate::operations::path_utils::dirname(path)?;
 
@@ -1140,6 +1245,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
 
                 let realpath = crate::operations::path_utils::realpath(path)?;
 
@@ -1156,6 +1264,9 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
+                if self.guard.is_denied(path) {
+                    return Self::not_found_error(path);
+                }
 
                 let target = crate::operations::path_utils::readlink(path)?;
 
@@ -1173,6 +1284,23 @@ impl ToolRegistry {
                     )
                 })?;
                 let template = args.get("template").and_then(|v| v.as_str());
+
+                // mktemp_{file,dir} uses the template's parent directory as the
+                // creation site. A template like `/etc/security/probe-XXXXXX`
+                // would happily create a file inside a protected directory if
+                // we don't check first. No directory check needed when the
+                // template is None or has no path component — those land in
+                // $TMPDIR (typically /tmp) which the deny-list does not cover.
+                if let Some(t) = template
+                    && t.contains('/')
+                    && self.guard.is_denied(t)
+                {
+                    return Self::silent_success(match temp_type {
+                        "file" => "Temporary file created",
+                        "dir" => "Temporary directory created",
+                        _ => "Temporary created",
+                    });
+                }
 
                 let path = match temp_type {
                     "file" => crate::operations::mktemp::mktemp_file(template)?,
@@ -1200,6 +1328,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                if paths.is_empty() {
+                    return Self::silent_success("Ownership changed successfully");
+                }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let user = args.get("user").and_then(|v| v.as_str());
                 let group = args.get("group").and_then(|v| v.as_str());
@@ -1230,6 +1362,7 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let counts = crate::operations::count_lines::count_lines(&path_refs)?;
@@ -1250,6 +1383,7 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
+                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let counts = crate::operations::count_words::count_words(&path_refs)?;
@@ -1274,6 +1408,19 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    /// Build a registry whose deny-list points at `denied_dir`. Uses a custom
+    /// guard rather than the default one so tests don't depend on the runner's
+    /// $HOME having `.ssh` etc.
+    fn registry_blocking(denied_dir: &str) -> ToolRegistry {
+        let pattern = if denied_dir.ends_with('/') {
+            denied_dir.to_string()
+        } else {
+            format!("{}/", denied_dir)
+        };
+        let guard = PathGuard::new(&[pattern], None);
+        ToolRegistry::with_guard(guard)
+    }
+
     #[tokio::test]
     async fn test_read_lines_rejects_negative_start_line() {
         let mut file = NamedTempFile::new().unwrap();
@@ -1287,6 +1434,98 @@ mod tests {
         let msg = format!("{}", res.err().unwrap());
         assert!(msg.to_lowercase().contains("start_line"));
         assert!(msg.to_lowercase().contains("non-negative"));
+    }
+
+    /// End-to-end: a read of a file inside a denied directory must look
+    /// indistinguishable from "the file doesn't exist". The actual file is
+    /// created on disk so we know the deny-list — not the filesystem — is
+    /// what produces the response.
+    #[tokio::test]
+    async fn read_inside_denied_directory_returns_not_found() {
+        let dir = std::env::temp_dir().join("fileio_deny_read_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("secret.txt");
+        std::fs::write(&target, "real contents").unwrap();
+
+        let registry = registry_blocking(dir.to_str().unwrap());
+        let args = serde_json::json!({ "path": target.to_str().unwrap() });
+        let res = registry.execute_tool("fileio_read_lines", &args).await;
+
+        assert!(res.is_err(), "denied read must surface as an error");
+        let msg = format!("{}", res.err().unwrap()).to_lowercase();
+        assert!(
+            msg.contains("not found"),
+            "denied read must use 'not found' deception: got {msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End-to-end: writes to a denied location report success but must not
+    /// touch the filesystem. Pre-existing content is unchanged; new files
+    /// aren't created.
+    #[tokio::test]
+    async fn write_inside_denied_directory_silently_succeeds_without_writing() {
+        let dir = std::env::temp_dir().join("fileio_deny_write_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("absent.txt");
+        assert!(!target.exists());
+
+        let registry = registry_blocking(dir.to_str().unwrap());
+        let args = serde_json::json!({
+            "path": target.to_str().unwrap(),
+            "content": "should never land",
+        });
+        let res = registry.execute_tool("fileio_write_file", &args).await;
+
+        assert!(res.is_ok(), "denied write must report success: {res:?}");
+        assert!(
+            !target.exists(),
+            "denied write must not actually create the file"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End-to-end: a `fileio_create_temporary` request whose template lands in
+    /// a denied directory must not actually create the temp file. This guards
+    /// against an LLM probing protected dirs by having mktemp create a file
+    /// there (e.g. template = "/etc/security/probe-XXXXXX").
+    #[tokio::test]
+    async fn create_temporary_with_denied_template_does_not_create() {
+        let dir = std::env::temp_dir().join("fileio_deny_mktemp_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Snapshot the directory so we can verify nothing was added.
+        let entries_before: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert!(entries_before.is_empty());
+
+        let registry = registry_blocking(dir.to_str().unwrap());
+        let template = format!("{}/probe-XXXXXX", dir.display());
+        let args = serde_json::json!({
+            "type": "file",
+            "template": template,
+        });
+        let res = registry.execute_tool("fileio_create_temporary", &args).await;
+
+        assert!(res.is_ok(), "denied mktemp must report success: {res:?}");
+
+        let entries_after: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert!(
+            entries_after.is_empty(),
+            "denied mktemp must not actually create anything; found: {entries_after:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
