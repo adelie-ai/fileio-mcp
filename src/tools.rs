@@ -782,7 +782,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 if paths.is_empty() {
                     return Self::silent_success("File mode set successfully");
                 }
@@ -809,7 +812,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
@@ -828,7 +834,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 if paths.is_empty() {
                     return Self::silent_success("File(s) touched successfully");
                 }
@@ -850,7 +859,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let stat_results = crate::operations::stat::stat(&path_refs)?;
@@ -872,7 +884,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 if paths.is_empty() {
                     return Self::silent_success("Directory(ies) created successfully");
                 }
@@ -1000,17 +1015,19 @@ impl ToolRegistry {
                     .unwrap_or(false);
 
                 let matches = crate::operations::find_in_files::find_in_files(
-                    pattern,
-                    path,
-                    case_sensitive,
-                    use_regex,
-                    max_count,
-                    max_depth,
-                    include_hidden,
-                    file_glob,
-                    exclude_glob,
-                    whole_word,
-                    multiline,
+                    &crate::operations::find_in_files::FindInFilesParams {
+                        pattern,
+                        path,
+                        case_sensitive,
+                        use_regex,
+                        max_count,
+                        max_depth,
+                        include_hidden,
+                        file_glob,
+                        exclude_glob,
+                        whole_word,
+                        multiline,
+                    },
                 )?;
                 let matches_json: Vec<Value> = matches.into_iter().map(|m| m.into()).collect();
 
@@ -1426,7 +1443,10 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 if paths.is_empty() {
                     return Self::silent_success("Ownership changed successfully");
                 }
@@ -1460,12 +1480,15 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let counts = crate::operations::count_lines::count_lines(&path_refs)?;
-                let counts_json = serde_json::to_string(&counts)
-                    .map_err(crate::error::FileIoMcpError::Json)?;
+                let counts_json =
+                    serde_json::to_string(&counts).map_err(crate::error::FileIoMcpError::Json)?;
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1481,12 +1504,15 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths.into_iter().filter(|p| !self.guard.is_denied(p)).collect();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|p| !self.guard.is_denied(p))
+                    .collect();
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
                 let counts = crate::operations::count_words::count_words(&path_refs)?;
-                let counts_json = serde_json::to_string(&counts)
-                    .map_err(crate::error::FileIoMcpError::Json)?;
+                let counts_json =
+                    serde_json::to_string(&counts).map_err(crate::error::FileIoMcpError::Json)?;
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1497,6 +1523,12 @@ impl ToolRegistry {
             }
             _ => Err(crate::error::McpError::ToolNotFound(name.to_string()).into()),
         }
+    }
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1608,11 +1640,13 @@ mod tests {
                 "text": "rust",
             }],
         });
-        let real_resp = real_registry.execute_tool("fileio_edit_file", &real_args).await.unwrap();
-        let real_body: serde_json::Value = serde_json::from_str(
-            real_resp["content"][0]["text"].as_str().unwrap(),
-        )
-        .expect("real response body must be JSON");
+        let real_resp = real_registry
+            .execute_tool("fileio_edit_file", &real_args)
+            .await
+            .unwrap();
+        let real_body: serde_json::Value =
+            serde_json::from_str(real_resp["content"][0]["text"].as_str().unwrap())
+                .expect("real response body must be JSON");
 
         // Denied edit of a path under a blocked directory.
         let denied = dir.join("denied.txt");
@@ -1621,11 +1655,13 @@ mod tests {
             "path": denied.to_str().unwrap(),
             "edits": [{ "op": "replace", "search": "x", "text": "y" }],
         });
-        let denied_resp = denied_registry.execute_tool("fileio_edit_file", &denied_args).await.unwrap();
-        let denied_body: serde_json::Value = serde_json::from_str(
-            denied_resp["content"][0]["text"].as_str().unwrap(),
-        )
-        .expect("denied response body must be JSON, not plain text");
+        let denied_resp = denied_registry
+            .execute_tool("fileio_edit_file", &denied_args)
+            .await
+            .unwrap();
+        let denied_body: serde_json::Value =
+            serde_json::from_str(denied_resp["content"][0]["text"].as_str().unwrap())
+                .expect("denied response body must be JSON, not plain text");
 
         // Same field set in both responses (different values are fine — the
         // attacker can't probe shape).
@@ -1670,10 +1706,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let real_body: serde_json::Value = serde_json::from_str(
-            real_resp["content"][0]["text"].as_str().unwrap(),
-        )
-        .expect("real response body must be JSON array of OpResult");
+        let real_body: serde_json::Value =
+            serde_json::from_str(real_resp["content"][0]["text"].as_str().unwrap())
+                .expect("real response body must be JSON array of OpResult");
         assert!(real_body.is_array());
         let real_obj_keys: Vec<_> = real_body[0].as_object().unwrap().keys().collect();
 
@@ -1693,13 +1728,15 @@ mod tests {
             )
             .await
             .unwrap();
-        let denied_body: serde_json::Value = serde_json::from_str(
-            denied_resp["content"][0]["text"].as_str().unwrap(),
-        )
-        .expect("denied response body must be JSON, not plain text");
+        let denied_body: serde_json::Value =
+            serde_json::from_str(denied_resp["content"][0]["text"].as_str().unwrap())
+                .expect("denied response body must be JSON, not plain text");
 
         // Shape match.
-        assert!(denied_body.is_array(), "denied response must be a JSON array");
+        assert!(
+            denied_body.is_array(),
+            "denied response must be a JSON array"
+        );
         let denied_arr = denied_body.as_array().unwrap();
         assert_eq!(
             denied_arr.len(),
@@ -1738,7 +1775,9 @@ mod tests {
             "type": "file",
             "template": template,
         });
-        let res = registry.execute_tool("fileio_create_temporary", &args).await;
+        let res = registry
+            .execute_tool("fileio_create_temporary", &args)
+            .await;
 
         assert!(res.is_ok(), "denied mktemp must report success: {res:?}");
 
@@ -1752,11 +1791,5 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }

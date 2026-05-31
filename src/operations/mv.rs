@@ -59,9 +59,10 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
         })?;
         let entry_path = entry.path();
         if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
-            && matcher.is_match(file_name) {
-                matches.push(entry_path);
-            }
+            && matcher.is_match(file_name)
+        {
+            matches.push(entry_path);
+        }
     }
 
     Ok(matches)

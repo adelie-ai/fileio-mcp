@@ -47,12 +47,10 @@ pub fn file_find(
             .replace(".", "\\.")
             .replace("*", ".*")
             .replace("?", ".");
-        regex::Regex::new(&format!("^{}$", regex_str))
-            .map_err(|e| FileIoError::RegexError(e))?
+        regex::Regex::new(&format!("^{}$", regex_str)).map_err(FileIoError::RegexError)?
     } else {
         // Simple substring match
-        regex::Regex::new(&regex::escape(pattern).to_string())
-            .map_err(|e| FileIoError::RegexError(e))?
+        regex::Regex::new(&regex::escape(pattern).to_string()).map_err(FileIoError::RegexError)?
     };
 
     let mut matches = Vec::new();
@@ -116,6 +114,6 @@ mod tests {
 
         let matches = file_find("test.txt", Some(root), Some(1), Some("file")).unwrap();
         // Should only find the one at root level with max_depth=1
-        assert!(matches.len() >= 1);
+        assert!(!matches.is_empty());
     }
 }

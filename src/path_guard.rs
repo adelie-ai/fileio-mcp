@@ -44,10 +44,7 @@ const DEFAULT_DENY: &[&str] = &[
 
 impl PathGuard {
     /// Build a PathGuard from hardcoded defaults + optional CLI extras + optional blocklist file.
-    pub fn new(
-        extra_paths: &[String],
-        block_file: Option<&str>,
-    ) -> Self {
+    pub fn new(extra_paths: &[String], block_file: Option<&str>) -> Self {
         let mut entries = Vec::new();
 
         // Load hardcoded defaults
@@ -233,7 +230,10 @@ mod tests {
 
     #[test]
     fn extra_paths_are_denied() {
-        let guard = PathGuard::new(&["/tmp/secret-dir/".into(), "/tmp/secret-file.txt".into()], None);
+        let guard = PathGuard::new(
+            &["/tmp/secret-dir/".into(), "/tmp/secret-file.txt".into()],
+            None,
+        );
         assert!(guard.is_denied("/tmp/secret-dir/foo.txt"));
         assert!(guard.is_denied("/tmp/secret-file.txt"));
         assert!(!guard.is_denied("/tmp/other.txt"));
