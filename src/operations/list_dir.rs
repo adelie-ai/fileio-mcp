@@ -42,7 +42,7 @@ pub fn list_directory(path: &str, recursive: bool, include_hidden: bool) -> Resu
     let mut entries = Vec::new();
 
     if recursive {
-        collect_entries_recursive(path_obj, path_obj, &mut entries, include_hidden)?;
+        collect_entries_recursive(path_obj, &mut entries, include_hidden)?;
     } else {
         collect_entries(path_obj, &mut entries, include_hidden)?;
     }
@@ -116,7 +116,6 @@ fn collect_entries(dir: &Path, entries: &mut Vec<DirEntry>, include_hidden: bool
 }
 
 fn collect_entries_recursive(
-    root: &Path,
     dir: &Path,
     entries: &mut Vec<DirEntry>,
     include_hidden: bool,
@@ -145,7 +144,7 @@ fn collect_entries_recursive(
                 continue;
             }
 
-            collect_entries_recursive(root, &path, entries, include_hidden)?;
+            collect_entries_recursive(&path, entries, include_hidden)?;
         }
     }
 

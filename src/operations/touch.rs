@@ -3,7 +3,7 @@
 // Touch a file (create or update timestamp)
 
 use crate::error::{FileIoError, Result};
-use filetime::{set_file_times, FileTime};
+use filetime::{FileTime, set_file_times};
 use std::fs;
 use std::path::Path;
 use std::time::SystemTime;

@@ -32,16 +32,16 @@ pub fn read_lines(
 
     // Reject files larger than 100 MiB to prevent memory exhaustion.
     const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
-    if let Ok(meta) = file.metadata() {
-        if meta.len() > MAX_FILE_SIZE {
-            return Err(FileIoError::ReadError(format!(
-                "File too large ({} bytes, max {}): {}",
-                meta.len(),
-                MAX_FILE_SIZE,
-                expanded_path
-            ))
-            .into());
-        }
+    if let Ok(meta) = file.metadata()
+        && meta.len() > MAX_FILE_SIZE
+    {
+        return Err(FileIoError::ReadError(format!(
+            "File too large ({} bytes, max {}): {}",
+            meta.len(),
+            MAX_FILE_SIZE,
+            expanded_path
+        ))
+        .into());
     }
 
     let reader = BufReader::new(file);

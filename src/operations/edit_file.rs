@@ -114,13 +114,13 @@ pub fn edit_file(req: EditFileRequest) -> Result<EditFileResult> {
     // Load file content (or create empty if allowed)
     let original_content = match fs::read_to_string(&expanded_path) {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound && req.create_if_missing => String::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && req.create_if_missing => {
+            String::new()
+        }
         Err(e) => {
-            return Err(crate::error::FileIoMcpError::from(FileIoError::from_io_error(
-                "read file",
-                &expanded_path,
-                e,
-            )))
+            return Err(crate::error::FileIoMcpError::from(
+                FileIoError::from_io_error("read file", &expanded_path, e),
+            ));
         }
     };
 
@@ -142,7 +142,8 @@ pub fn edit_file(req: EditFileRequest) -> Result<EditFileResult> {
                 occurrence,
                 require_match,
             } => {
-                let Some((_, end)) = find_nth_span(&content, &search, use_regex, occurrence)? else {
+                let Some((_, end)) = find_nth_span(&content, &search, use_regex, occurrence)?
+                else {
                     if require_match {
                         return Err(FileIoError::InvalidPath(format!(
                             "Edit failed: search pattern not found (insert_after): {}",
@@ -283,10 +284,7 @@ fn find_nth_span(
     occurrence: u32,
 ) -> Result<Option<(usize, usize)>> {
     if occurrence == 0 {
-        return Err(FileIoError::InvalidLineNumbers(
-            "occurrence must be >= 1".to_string(),
-        )
-        .into());
+        return Err(FileIoError::InvalidLineNumbers("occurrence must be >= 1".to_string()).into());
     }
 
     if needle.is_empty() {
@@ -372,10 +370,13 @@ fn line_start_offset(content: &str, line: usize, allow_past_end: bool) -> Result
     starts
         .get(line - 1)
         .copied()
-        .ok_or_else(|| FileIoError::InvalidLineNumbers(format!(
-            "Invalid line number: {} (file has {} lines)",
-            line, starts.len()
-        )))
+        .ok_or_else(|| {
+            FileIoError::InvalidLineNumbers(format!(
+                "Invalid line number: {} (file has {} lines)",
+                line,
+                starts.len()
+            ))
+        })
         .map_err(|e| e.into())
 }
 

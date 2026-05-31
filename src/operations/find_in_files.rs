@@ -17,20 +17,41 @@ pub struct Match {
     pub context_after: Option<String>,
 }
 
+/// Parameters for [`find_in_files`].
+///
+/// Grouped into a struct to keep the call signature readable (and to satisfy
+/// clippy's `too_many_arguments` lint).
+#[derive(Debug, Clone)]
+pub struct FindInFilesParams<'a> {
+    pub pattern: &'a str,
+    pub path: &'a str,
+    pub case_sensitive: bool,
+    pub use_regex: bool,
+    pub max_count: Option<u64>,
+    pub max_depth: Option<usize>,
+    pub include_hidden: bool,
+    pub file_glob: Option<&'a str>,
+    pub exclude_glob: Option<&'a str>,
+    pub whole_word: bool,
+    pub multiline: bool,
+}
+
 /// Find text in files
-pub fn find_in_files(
-    pattern: &str,
-    path: &str,
-    case_sensitive: bool,
-    use_regex: bool,
-    max_count: Option<u64>,
-    max_depth: Option<usize>,
-    include_hidden: bool,
-    file_glob: Option<&str>,
-    exclude_glob: Option<&str>,
-    whole_word: bool,
-    multiline: bool,
-) -> Result<Vec<Match>> {
+pub fn find_in_files(params: &FindInFilesParams<'_>) -> Result<Vec<Match>> {
+    let FindInFilesParams {
+        pattern,
+        path,
+        case_sensitive,
+        use_regex,
+        max_count,
+        max_depth,
+        include_hidden,
+        file_glob,
+        exclude_glob,
+        whole_word,
+        multiline,
+    } = *params;
+
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {
             crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
@@ -136,7 +157,6 @@ pub fn find_in_files(
 
         // Search in file
         let mut file_matches = Vec::new();
-        let mut line_number = 1u64;
 
         let content_bytes = std::fs::read(entry_path).map_err(|e| {
             FileIoError::ReadError(format!("Failed to read file {}: {}", file_path, e))
@@ -147,7 +167,7 @@ pub fn find_in_files(
             Err(_) => continue,
         };
 
-        for line in content.lines() {
+        for (line_number, line) in (1u64..).zip(content.lines()) {
             if let Some(max) = max_count {
                 let count = file_match_counts.get(&file_path).copied().unwrap_or(0);
                 if count >= max {
@@ -174,8 +194,6 @@ pub fn find_in_files(
                     }
                 }
             }
-
-            line_number += 1;
         }
 
         matches.extend(file_matches);
@@ -223,6 +241,24 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// Build a `FindInFilesParams` with non-search fields defaulted, so tests
+    /// only specify what they care about.
+    fn params<'a>(pattern: &'a str, path: &'a str) -> FindInFilesParams<'a> {
+        FindInFilesParams {
+            pattern,
+            path,
+            case_sensitive: true,
+            use_regex: false,
+            max_count: None,
+            max_depth: None,
+            include_hidden: false,
+            file_glob: None,
+            exclude_glob: None,
+            whole_word: false,
+            multiline: false,
+        }
+    }
+
     #[test]
     fn test_find_in_files_literal() {
         let dir = TempDir::new().unwrap();
@@ -230,10 +266,7 @@ mod tests {
 
         fs::write(dir.path().join("test.txt"), "hello world\nfoo bar").unwrap();
 
-        let matches = find_in_files(
-            "hello", root, true, false, None, None, false, None, None, false, false,
-        )
-        .unwrap();
+        let matches = find_in_files(&params("hello", root)).unwrap();
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].matched_text, "hello");
@@ -247,9 +280,10 @@ mod tests {
 
         fs::write(dir.path().join("test.txt"), "hello123\nworld456").unwrap();
 
-        let matches = find_in_files(
-            r"\d+", root, true, true, None, None, false, None, None, false, false,
-        )
+        let matches = find_in_files(&FindInFilesParams {
+            use_regex: true,
+            ..params(r"\d+", root)
+        })
         .unwrap();
 
         assert_eq!(matches.len(), 2);
@@ -262,9 +296,10 @@ mod tests {
 
         fs::write(dir.path().join("test.txt"), "Hello World").unwrap();
 
-        let matches = find_in_files(
-            "hello", root, false, false, None, None, false, None, None, false, false,
-        )
+        let matches = find_in_files(&FindInFilesParams {
+            case_sensitive: false,
+            ..params("hello", root)
+        })
         .unwrap();
 
         assert_eq!(matches.len(), 1);
@@ -277,19 +312,10 @@ mod tests {
 
         fs::write(dir.path().join("test.txt"), "hello hello hello").unwrap();
 
-        let matches = find_in_files(
-            "hello",
-            root,
-            true,
-            false,
-            Some(2),
-            None,
-            false,
-            None,
-            None,
-            false,
-            false,
-        )
+        let matches = find_in_files(&FindInFilesParams {
+            max_count: Some(2),
+            ..params("hello", root)
+        })
         .unwrap();
 
         assert_eq!(matches.len(), 2);
@@ -303,10 +329,7 @@ mod tests {
         fs::write(dir.path().join("text.txt"), "needle in text\n").unwrap();
         fs::write(dir.path().join("binary.bin"), [0xFFu8, 0x00, 0x80, 0xFE]).unwrap();
 
-        let matches = find_in_files(
-            "needle", root, true, false, None, None, false, None, None, false, false,
-        )
-        .unwrap();
+        let matches = find_in_files(&params("needle", root)).unwrap();
 
         assert_eq!(matches.len(), 1);
         assert!(matches[0].file_path.ends_with("text.txt"));
