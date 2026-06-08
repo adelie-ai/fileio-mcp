@@ -112,6 +112,12 @@ pub fn find_in_files(params: &FindInFilesParams<'_>) -> Result<Vec<Match>> {
             .map_err(|e| FileIoError::InvalidPath(format!("Invalid file_glob pattern: {}", e)))?;
         let glob_matcher = glob_pattern.compile_matcher();
         walker.filter_entry(move |entry| {
+            // Always descend into directories — the glob only applies to file names.
+            // Without this, any directory whose name doesn't match the glob would be
+            // pruned from the walk, causing subtrees to be silently skipped.
+            if entry.path().is_dir() {
+                return true;
+            }
             entry
                 .path()
                 .file_name()
@@ -333,5 +339,38 @@ mod tests {
 
         assert_eq!(matches.len(), 1);
         assert!(matches[0].file_path.ends_with("text.txt"));
+    }
+
+    /// Regression test: `file_glob` must not prune subdirectories, so files
+    /// in nested directories must still be found.
+    #[test]
+    fn test_find_in_files_file_glob_searches_subdirectories() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_str().unwrap();
+
+        // Create a file at the root level (should match).
+        fs::write(dir.path().join("root.rs"), "fn target() {}").unwrap();
+
+        // Create a file two levels deep inside a directory whose name does NOT
+        // match "*.rs" (the glob is for file names, not directory names).  The
+        // bug: without the directory passthrough the walker pruned `subdir/` and
+        // `subdir/nested/` because "subdir" doesn't match "*.rs".
+        let nested = dir.path().join("subdir").join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("deep.rs"), "fn target() {}").unwrap();
+
+        // This file must NOT be returned (wrong extension).
+        fs::write(dir.path().join("ignored.txt"), "fn target() {}").unwrap();
+
+        let matches = find_in_files(&FindInFilesParams {
+            file_glob: Some("*.rs"),
+            ..params("target", root)
+        })
+        .unwrap();
+
+        // Both .rs files should be found.
+        assert_eq!(matches.len(), 2, "expected 2 matches, got: {:?}", matches);
+        assert!(matches.iter().any(|m| m.file_path.ends_with("root.rs")));
+        assert!(matches.iter().any(|m| m.file_path.ends_with("deep.rs")));
     }
 }
