@@ -1,380 +1,41 @@
 #![deny(warnings)]
 
-// Binary crate for fileio-mcp - uses library crate
+//! fileio-mcp binary entry-point.
+//!
+//! Protocol dispatch, transport framing, and the `serve` CLI are all provided
+//! by mcp-core.  This binary only needs to parse its own extra flags
+//! (`--block-path`, `--block-file`), build the `PathGuard`, and hand off to
+//! mcp-core.
 
-use axum::{
-    Router,
-    extract::{State, ws::WebSocketUpgrade},
-    response::Response,
-    routing::get,
-};
-use clap::{Parser, ValueEnum};
-use fileio_mcp::error::Result;
+use clap::Args;
 use fileio_mcp::path_guard::PathGuard;
-use fileio_mcp::server::McpServer;
-use fileio_mcp::transport::StdioTransportHandler;
-use serde_json::Value;
-use std::fmt;
-use std::sync::Arc;
-use tokio::net::TcpListener;
+use fileio_mcp::service::FileIoService;
+use mcp_core::{Result, ServerConfig};
 
-#[derive(Clone, Debug, ValueEnum)]
-enum TransportMode {
-    /// STDIN/STDOUT transport (recommended for VS Code and local usage)
-    Stdio,
-    /// WebSocket transport (recommended for hosted MCP services)
-    Websocket,
-}
+/// fileio-mcp-specific serve flags. mcp-core flattens `CommonServeArgs`
+/// (including `--transport` / `--mode` alias) into the `serve` subcommand
+/// automatically; this struct carries only what fileio-mcp adds on top.
+#[derive(Args)]
+struct Local {
+    /// Additional paths to block (repeatable). Trailing / means directory prefix.
+    #[arg(long = "block-path")]
+    block_paths: Vec<String>,
 
-impl fmt::Display for TransportMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TransportMode::Stdio => write!(f, "stdio"),
-            TransportMode::Websocket => write!(f, "websocket"),
-        }
-    }
-}
-
-#[derive(Parser)]
-#[command(name = "fileio-mcp")]
-#[command(about = "File I/O MCP Server")]
-#[command(
-    long_about = "fileio-mcp provides file I/O operations as an MCP server for LLM orchestrators.\n\nUsage:\n  fileio-mcp serve --mode stdio\n  fileio-mcp serve --mode websocket --host 0.0.0.0 --port 8080"
-)]
-#[command(version)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(clap::Subcommand)]
-enum Commands {
-    /// Run the MCP server
-    Serve {
-        /// Transport mode
-        #[arg(short, long, default_value_t = TransportMode::Stdio)]
-        mode: TransportMode,
-        /// Port for WebSocket mode (ignored for stdio)
-        #[arg(short, long, default_value_t = 8080)]
-        port: u16,
-        /// Host for WebSocket mode (ignored for stdio)
-        #[arg(long, default_value = "0.0.0.0")]
-        host: String,
-        /// Additional paths to block (repeatable). Trailing / means directory prefix.
-        #[arg(long = "block-path")]
-        block_paths: Vec<String>,
-        /// File containing additional paths to block (one per line, # comments).
-        #[arg(long = "block-file")]
-        block_file: Option<String>,
-    },
+    /// File containing additional paths to block (one per line, # comments).
+    #[arg(long = "block-file")]
+    block_file: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let config = ServerConfig::new("fileio-mcp", env!("CARGO_PKG_VERSION"))
+        // Websocket is nice to support but not required; keep it available.
+        // Unix socket is opt-in via --transport unix.
+        .with_unix();
 
-    match cli.command {
-        Commands::Serve {
-            mode,
-            port,
-            host,
-            block_paths,
-            block_file,
-        } => {
-            let guard = PathGuard::new(&block_paths, block_file.as_deref());
-            let server = McpServer::with_guard(guard);
-
-            match mode {
-                TransportMode::Stdio => run_stdio_server(server).await?,
-                TransportMode::Websocket => run_websocket_server(server, &host, port).await?,
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_stdio_server(server: McpServer) -> Result<()> {
-    let server = Arc::new(server);
-    let mut transport = StdioTransportHandler::new();
-
-    loop {
-        // Read JSON-RPC message from stdin
-        let message_str = match transport.read_message().await {
-            Ok(msg) => msg,
-            Err(e) => {
-                eprintln!("Error reading message: {}", e);
-                break;
-            }
-        };
-
-        if message_str.is_empty() {
-            continue;
-        }
-
-        // Parse JSON-RPC message
-        let message: Value = match serde_json::from_str(&message_str) {
-            Ok(msg) => msg,
-            Err(e) => {
-                eprintln!("Error parsing JSON-RPC message: {}", e);
-                // Send parse error response
-                let error_response = jsonrpc_error_response(None, -32700, "Parse error", None);
-                if let Ok(resp_str) = serde_json::to_string(&error_response) {
-                    let _ = transport.write_message(&resp_str).await;
-                }
-                continue;
-            }
-        };
-
-        // Handle message and get response
-        let response = handle_jsonrpc_message(Arc::clone(&server), message).await;
-
-        // Send response if present (notifications don't have responses)
-        if let Some(resp) = response {
-            let resp_str = match serde_json::to_string(&resp) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error serializing response: {}", e);
-                    continue;
-                }
-            };
-            if let Err(e) = transport.write_message(&resp_str).await {
-                eprintln!("Error writing response: {}", e);
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_websocket_server(server: McpServer, host: &str, port: u16) -> Result<()> {
-    let server = Arc::new(server);
-
-    let app = Router::new()
-        .route("/ws", get(websocket_handler))
-        .with_state(server);
-
-    let addr = format!("{}:{}", host, port);
-    let listener = TcpListener::bind(&addr).await?;
-    eprintln!("WebSocket server listening on {}", addr);
-
-    axum::serve(listener, app).await?;
-    Ok(())
-}
-
-async fn websocket_handler(ws: WebSocketUpgrade, State(server): State<Arc<McpServer>>) -> Response {
-    ws.on_upgrade(move |socket| handle_websocket_connection(socket, server))
-}
-
-async fn handle_websocket_connection(socket: axum::extract::ws::WebSocket, server: Arc<McpServer>) {
-    use axum::extract::ws::Message;
-    use futures_util::{SinkExt, StreamExt};
-
-    let (mut sender, mut receiver) = socket.split();
-
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                // Parse JSON-RPC message
-                let message: Value = match serde_json::from_str(&text) {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        eprintln!("Error parsing JSON-RPC message: {}", e);
-                        let error_response =
-                            jsonrpc_error_response(None, -32700, "Parse error", None);
-                        if let Ok(resp_str) = serde_json::to_string(&error_response) {
-                            let _ = sender.send(Message::Text(resp_str.into())).await;
-                        }
-                        continue;
-                    }
-                };
-
-                // Handle message and get response
-                let response = handle_jsonrpc_message(Arc::clone(&server), message).await;
-
-                // Send response if present
-                if let Some(resp) = response
-                    && let Ok(resp_str) = serde_json::to_string(&resp)
-                    && let Err(e) = sender.send(Message::Text(resp_str.into())).await
-                {
-                    eprintln!("Error sending WebSocket response: {}", e);
-                    break;
-                }
-            }
-            Ok(Message::Close(_)) => {
-                break;
-            }
-            Err(e) => {
-                eprintln!("WebSocket error: {}", e);
-                break;
-            }
-            _ => {}
-        }
-    }
-}
-
-async fn handle_jsonrpc_message(server: Arc<McpServer>, message: Value) -> Option<Value> {
-    // Validate JSON-RPC version (if present)
-    if let Some(jsonrpc_version) = message.get("jsonrpc").and_then(|v| v.as_str())
-        && jsonrpc_version != "2.0"
-    {
-        let id = message.get("id").cloned();
-        let error_msg = format!("Invalid JSON-RPC version: {}", jsonrpc_version);
-        return Some(jsonrpc_error_response(id, -32600, &error_msg, None));
-    }
-
-    // Extract JSON-RPC fields
-    let id = message.get("id").cloned();
-    let method = message.get("method").and_then(|m| m.as_str());
-    let params = message.get("params").cloned().unwrap_or(Value::Null);
-
-    // Check if this is a notification (no id) or request (has id)
-    let is_notification = id.is_none();
-
-    // Handle different MCP methods
-    let result = match method {
-        Some("initialize") => {
-            let protocol_version = params
-                .get("protocolVersion")
-                .and_then(|v| v.as_str())
-                .unwrap_or("2024-11-05");
-            let client_capabilities = params.get("capabilities").unwrap_or(&Value::Null);
-
-            match server
-                .handle_initialize(protocol_version, client_capabilities)
-                .await
-            {
-                Ok(capabilities) => Ok(capabilities),
-                Err(e) => Err(e),
-            }
-        }
-        Some("initialized") | Some("notifications/initialized") => {
-            match server.handle_initialized().await {
-                Ok(_) => Ok(Value::Null),
-                Err(e) => Err(e),
-            }
-        }
-        Some("tools/list") => {
-            // Check if server is initialized
-            if !server.is_initialized().await {
-                return Some(jsonrpc_error_response(
-                    id,
-                    -32000,
-                    "Server not initialized. Call 'initialize' first.",
-                    None,
-                ));
-            }
-
-            Ok(serde_json::json!({ "tools": server.list_tools() }))
-        }
-        Some("tools/call") => {
-            // Check if server is initialized
-            if !server.is_initialized().await {
-                return Some(jsonrpc_error_response(
-                    id,
-                    -32000,
-                    "Server not initialized. Call 'initialize' first.",
-                    None,
-                ));
-            }
-
-            let tool_name = params.get("name").and_then(|n| n.as_str());
-            let arguments = params.get("arguments").unwrap_or(&Value::Null);
-
-            if let Some(name) = tool_name {
-                match server.handle_tool_call(name, arguments).await {
-                    Ok(result) => Ok(result),
-                    // Per MCP spec, tool execution errors must be reported as
-                    // `isError: true` content in the result, not as JSON-RPC
-                    // errors.  JSON-RPC errors are reserved for protocol-level
-                    // failures; embedding tool errors there means they are
-                    // invisible to the LLM (issue #6).
-                    Err(e) => Ok(serde_json::json!({
-                        "isError": true,
-                        "content": [{
-                            "type": "text",
-                            "text": e.to_string(),
-                        }],
-                    })),
-                }
-            } else {
-                // Invalid params - JSON-RPC 2.0 error code -32602
-                return Some(jsonrpc_error_response(
-                    id,
-                    -32602,
-                    "Invalid params: Missing tool name",
-                    None,
-                ));
-            }
-        }
-        Some("shutdown") => {
-            // Check if server is initialized
-            if !server.is_initialized().await {
-                return Some(jsonrpc_error_response(
-                    id,
-                    -32000,
-                    "Server not initialized. Call 'initialize' first.",
-                    None,
-                ));
-            }
-
-            match server.handle_shutdown().await {
-                Ok(_) => Ok(Value::Null),
-                Err(e) => Err(e),
-            }
-        }
-        Some(_) | None => {
-            // Method not found - JSON-RPC 2.0 error code -32601
-            return Some(jsonrpc_error_response(
-                id,
-                -32601,
-                &format!("Method not found: {:?}", method.unwrap_or("(missing)")),
-                None,
-            ));
-        }
-    };
-
-    // Build response
-    match result {
-        Ok(result_value) => {
-            if is_notification {
-                // Notifications don't get responses
-                None
-            } else {
-                // Build success response
-                Some(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": result_value,
-                }))
-            }
-        }
-        Err(e) => {
-            if is_notification {
-                // Notifications don't get error responses either
-                None
-            } else {
-                // Build error response
-                Some(jsonrpc_error_response(id, -32000, &e.to_string(), None))
-            }
-        }
-    }
-}
-
-fn jsonrpc_error_response(
-    id: Option<Value>,
-    code: i32,
-    message: &str,
-    data: Option<Value>,
-) -> Value {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message,
-            "data": data,
-        },
+    mcp_core::run::<Local, FileIoService, _, _>(config, |local| async move {
+        let guard = PathGuard::new(&local.block_paths, local.block_file.as_deref());
+        Ok(FileIoService::with_guard(guard))
     })
+    .await
 }
