@@ -48,10 +48,10 @@ impl McpServer {
             return Err(McpError::InvalidProtocolVersion(protocol_version.to_string()).into());
         }
 
-        // Get tool list
-        let tools = self.tool_registry.list_tools();
-
-        // Build server capabilities
+        // Build server capabilities.
+        // The MCP spec does NOT include a top-level "tools" key in the
+        // initialize response; tools are surfaced via tools/list.  The extra
+        // key was removed (issue #6) to avoid confusing strict clients.
         let capabilities = serde_json::json!({
             "protocolVersion": protocol_version,
             "serverInfo": {
@@ -63,7 +63,6 @@ impl McpServer {
                     "listChanged": false,
                 },
             },
-            "tools": tools,
         });
 
         Ok(capabilities)

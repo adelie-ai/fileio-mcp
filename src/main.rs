@@ -285,7 +285,18 @@ async fn handle_jsonrpc_message(server: Arc<McpServer>, message: Value) -> Optio
             if let Some(name) = tool_name {
                 match server.handle_tool_call(name, arguments).await {
                     Ok(result) => Ok(result),
-                    Err(e) => Err(e),
+                    // Per MCP spec, tool execution errors must be reported as
+                    // `isError: true` content in the result, not as JSON-RPC
+                    // errors.  JSON-RPC errors are reserved for protocol-level
+                    // failures; embedding tool errors there means they are
+                    // invisible to the LLM (issue #6).
+                    Err(e) => Ok(serde_json::json!({
+                        "isError": true,
+                        "content": [{
+                            "type": "text",
+                            "text": e.to_string(),
+                        }],
+                    })),
                 }
             } else {
                 // Invalid params - JSON-RPC 2.0 error code -32602

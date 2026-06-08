@@ -106,7 +106,13 @@ pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<Vec<Op
             }
 
             for match_path in matches {
-                all_sources.push(match_path.to_str().unwrap().to_string());
+                let s = match_path.to_str().ok_or_else(|| {
+                    FileIoError::InvalidPath(format!(
+                        "Path is not valid UTF-8: {}",
+                        match_path.display()
+                    ))
+                })?;
+                all_sources.push(s.to_string());
             }
         } else {
             // Single path
@@ -126,12 +132,24 @@ pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<Vec<Op
     for source_path in &all_sources {
         let dest = if dest_is_dir {
             let source_path_obj = Path::new(source_path);
-            dest_path.join(source_path_obj.file_name().unwrap())
+            let file_name = source_path_obj.file_name().ok_or_else(|| {
+                FileIoError::InvalidPath(format!(
+                    "Source path has no file name (is it the root?): {}",
+                    source_path
+                ))
+            })?;
+            dest_path.join(file_name)
         } else {
             dest_path.to_path_buf()
         };
 
-        match cp_single(source_path, dest.to_str().unwrap(), recursive) {
+        let dest_str = dest.to_str().ok_or_else(|| {
+            FileIoError::InvalidPath(format!(
+                "Destination path is not valid UTF-8: {}",
+                dest.display()
+            ))
+        })?;
+        match cp_single(source_path, dest_str, recursive) {
             Ok(()) => results.push(OpResult {
                 path: source_path.clone(),
                 status: "ok".to_string(),

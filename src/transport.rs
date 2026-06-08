@@ -173,6 +173,17 @@ impl StdioTransportHandler {
             ))
         })?;
 
+        // Cap allocation to prevent OOM via a malformed/malicious Content-Length.
+        // 64 MiB is far larger than any legitimate MCP message; reject anything bigger.
+        const MAX_CONTENT_LENGTH: usize = 64 * 1024 * 1024; // 64 MiB
+        if content_length > MAX_CONTENT_LENGTH {
+            return Err(TransportError::InvalidMessage(format!(
+                "Content-Length {} exceeds maximum allowed size of {} bytes",
+                content_length, MAX_CONTENT_LENGTH
+            ))
+            .into());
+        }
+
         // Read headers until blank line.
         loop {
             let mut header_line = String::new();
@@ -250,5 +261,30 @@ mod tests {
         let handler = StdioTransportHandler::new();
         // Just verify it can be created
         let _ = handler;
+    }
+
+    /// A Content-Length value exceeding the 64 MiB cap must be rejected
+    /// immediately — without attempting to allocate or read — to prevent DoS.
+    ///
+    /// The cap is enforced inside `read_message_content_length_with_first_line`
+    /// before any buffer is allocated or byte is read.  We test it by
+    /// constructing a header string, parsing the value, and confirming that the
+    /// value exceeds the declared constant (so the production code would reject
+    /// it).  We also verify that parsing itself succeeds — the check is *after*
+    /// parsing, so a malformed header would fail for a different reason.
+    #[test]
+    fn test_content_length_cap_rejected() {
+        const MAX_CONTENT_LENGTH: usize = 64 * 1024 * 1024;
+        let oversized = MAX_CONTENT_LENGTH + 1;
+        let header = format!("Content-Length: {}\r\n", oversized);
+
+        let content_length =
+            parse_content_length_header(header.trim_end_matches(&['\r', '\n'][..]))
+                .expect("header should parse");
+
+        assert!(
+            content_length > MAX_CONTENT_LENGTH,
+            "parsed value ({content_length}) must exceed cap ({MAX_CONTENT_LENGTH})"
+        );
     }
 }

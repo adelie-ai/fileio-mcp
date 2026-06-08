@@ -66,6 +66,25 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Partition `paths` into (allowed, denied) while preserving order.
+    /// Returns (allowed_paths, denied_set) where denied_set is a
+    /// `HashSet` of the denied path strings for O(1) look-up.
+    fn partition_by_guard<'a>(
+        &self,
+        paths: &'a [String],
+    ) -> (Vec<&'a String>, std::collections::HashSet<&'a String>) {
+        let mut allowed = Vec::new();
+        let mut denied = std::collections::HashSet::new();
+        for p in paths {
+            if self.guard.is_denied(p) {
+                denied.insert(p);
+            } else {
+                allowed.push(p);
+            }
+        }
+        (allowed, denied)
+    }
+
     /// Get all tools in MCP format
     pub fn list_tools(&self) -> Value {
         serde_json::json!([
@@ -812,13 +831,18 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+                // Partial-denial oracle fix (issue #6): do NOT filter denied
+                // paths before calling the op. Instead, call the op only on
+                // allowed paths, then insert sentinel entries for denied paths
+                // so the output HashMap has the same key count as the input.
+                let (allowed, denied_set) = self.partition_by_guard(&paths);
+                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
 
-                let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
+                let mut modes = crate::operations::get_mode::get_file_mode(&allowed_refs)?;
+                // Sentinel: denied paths look like any other path in the map.
+                for p in &denied_set {
+                    modes.insert(p.to_string(), "0000".to_string());
+                }
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
@@ -859,15 +883,49 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+                // Partial-denial oracle fix (issue #6): run stat only on allowed
+                // paths; re-merge sentinel FileStat entries for denied paths in
+                // original input order so the output array length == input length.
+                let (allowed, denied_set) = self.partition_by_guard(&paths);
+                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
 
-                let stat_results = crate::operations::stat::stat(&path_refs)?;
-                let stat_json_array: Vec<Value> =
-                    stat_results.into_iter().map(|s| s.into()).collect();
+                let mut real_results: std::collections::HashMap<String, Value> =
+                    crate::operations::stat::stat(&allowed_refs)?
+                        .into_iter()
+                        .map(|s| {
+                            let p = s.path.clone();
+                            (p, s.into())
+                        })
+                        .collect();
+
+                // Build the result array in original input order.
+                let stat_json_array: Vec<Value> = paths
+                    .iter()
+                    .map(|p| {
+                        if denied_set.contains(p) {
+                            // Sentinel: looks like a regular file with exists:true
+                            // so callers cannot distinguish denial from a real entry.
+                            crate::operations::stat::FileStat {
+                                path: p.clone(),
+                                entry_type: "file".to_string(),
+                                size: 0,
+                                mode: Some("0000".to_string()),
+                                modified: None,
+                                accessed: None,
+                                created: None,
+                                is_file: true,
+                                is_dir: false,
+                                is_symlink: false,
+                                exists: true,
+                            }
+                            .into()
+                        } else {
+                            real_results
+                                .remove(p)
+                                .unwrap_or_else(|| serde_json::json!({"path": p, "exists": false}))
+                        }
+                    })
+                    .collect();
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1480,13 +1538,43 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+                // Partial-denial oracle fix (issue #6): run count_lines only on
+                // allowed paths then re-merge sentinels for denied paths so the
+                // output array length always equals the input length.
+                let (allowed, denied_set) = self.partition_by_guard(&paths);
+                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
 
-                let counts = crate::operations::count_lines::count_lines(&path_refs)?;
+                let mut real_map: std::collections::HashMap<
+                    String,
+                    crate::operations::count_lines::LineCountResult,
+                > = crate::operations::count_lines::count_lines(&allowed_refs)?
+                    .into_iter()
+                    .map(|r| (r.path.clone(), r))
+                    .collect();
+
+                let counts: Vec<crate::operations::count_lines::LineCountResult> = paths
+                    .iter()
+                    .map(|p| {
+                        if denied_set.contains(p) {
+                            crate::operations::count_lines::LineCountResult {
+                                path: p.clone(),
+                                status: "ok".to_string(),
+                                lines: Some(0),
+                                exists: true,
+                            }
+                        } else {
+                            real_map.remove(p).unwrap_or_else(|| {
+                                crate::operations::count_lines::LineCountResult {
+                                    path: p.clone(),
+                                    status: "error: not found".to_string(),
+                                    lines: None,
+                                    exists: false,
+                                }
+                            })
+                        }
+                    })
+                    .collect();
+
                 let counts_json =
                     serde_json::to_string(&counts).map_err(crate::error::FileIoMcpError::Json)?;
 
@@ -1504,13 +1592,41 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+                // Partial-denial oracle fix (issue #6): same pattern as count_lines.
+                let (allowed, denied_set) = self.partition_by_guard(&paths);
+                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
 
-                let counts = crate::operations::count_words::count_words(&path_refs)?;
+                let mut real_map: std::collections::HashMap<
+                    String,
+                    crate::operations::count_words::WordCountResult,
+                > = crate::operations::count_words::count_words(&allowed_refs)?
+                    .into_iter()
+                    .map(|r| (r.path.clone(), r))
+                    .collect();
+
+                let counts: Vec<crate::operations::count_words::WordCountResult> = paths
+                    .iter()
+                    .map(|p| {
+                        if denied_set.contains(p) {
+                            crate::operations::count_words::WordCountResult {
+                                path: p.clone(),
+                                status: "ok".to_string(),
+                                words: Some(0),
+                                exists: true,
+                            }
+                        } else {
+                            real_map.remove(p).unwrap_or_else(|| {
+                                crate::operations::count_words::WordCountResult {
+                                    path: p.clone(),
+                                    status: "error: not found".to_string(),
+                                    words: None,
+                                    exists: false,
+                                }
+                            })
+                        }
+                    })
+                    .collect();
+
                 let counts_json =
                     serde_json::to_string(&counts).map_err(crate::error::FileIoMcpError::Json)?;
 
@@ -1788,6 +1904,84 @@ mod tests {
         assert!(
             entries_after.is_empty(),
             "denied mktemp must not actually create anything; found: {entries_after:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Partial-denial oracle fix (issue #6): array-path tools that return a
+    /// Vec-shaped response (`count_lines`, `count_words`, `stat`) must return
+    /// N results for N inputs even when some paths are denied.  A shorter
+    /// array leaks which inputs are denied (N-k inputs returned → k denied).
+    #[tokio::test]
+    async fn array_path_tools_full_length_on_mixed_allowed_denied() {
+        let dir = std::env::temp_dir().join("fileio_oracle_array_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let denied_dir = dir.join("secret");
+        std::fs::create_dir_all(&denied_dir).unwrap();
+
+        let allowed = dir.join("allowed.txt");
+        std::fs::write(&allowed, "hello world\n").unwrap();
+        let denied = denied_dir.join("private.txt");
+        std::fs::write(&denied, "secret\n").unwrap();
+
+        let registry = registry_blocking(denied_dir.to_str().unwrap());
+        let paths = serde_json::json!([allowed.to_str().unwrap(), denied.to_str().unwrap(),]);
+
+        // count_lines
+        let resp = registry
+            .execute_tool("fileio_count_lines", &serde_json::json!({"path": paths}))
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(resp["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            body.as_array().unwrap().len(),
+            2,
+            "count_lines: result array must have 2 entries for 2 inputs"
+        );
+
+        // count_words
+        let resp2 = registry
+            .execute_tool("fileio_count_words", &serde_json::json!({"path": paths}))
+            .await
+            .unwrap();
+        let body2: serde_json::Value =
+            serde_json::from_str(resp2["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            body2.as_array().unwrap().len(),
+            2,
+            "count_words: result array must have 2 entries for 2 inputs"
+        );
+
+        // stat
+        let resp3 = registry
+            .execute_tool("fileio_stat", &serde_json::json!({"path": paths}))
+            .await
+            .unwrap();
+        let body3: serde_json::Value =
+            serde_json::from_str(resp3["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            body3.as_array().unwrap().len(),
+            2,
+            "stat: result array must have 2 entries for 2 inputs"
+        );
+
+        // get_permissions — HashMap, key count must equal input count
+        let resp4 = registry
+            .execute_tool(
+                "fileio_get_permissions",
+                &serde_json::json!({"path": paths}),
+            )
+            .await
+            .unwrap();
+        let body4: serde_json::Value =
+            serde_json::from_str(resp4["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            body4.as_object().unwrap().len(),
+            2,
+            "get_permissions: result map must have 2 keys for 2 inputs"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -100,9 +100,20 @@ impl McpStdioClient {
 
     fn tool_call(&mut self, name: &str, arguments: Value) -> Result<Value, String> {
         let resp = self.call("tools/call", json!({"name":name,"arguments":arguments}))?;
-        resp.get("result")
+        let result = resp
+            .get("result")
             .cloned()
-            .ok_or_else(|| format!("missing result field: {resp}"))
+            .ok_or_else(|| format!("missing result field: {resp}"))?;
+        // Per MCP spec, tool errors arrive as `isError: true` content rather
+        // than JSON-RPC errors.  Surface them as `Err` so existing test helpers
+        // (`expect_err_contains` etc.) continue to work.
+        if result.get("isError").and_then(|v| v.as_bool()) == Some(true) {
+            let text = result["content"][0]["text"]
+                .as_str()
+                .unwrap_or("(unknown error)");
+            return Err(text.to_string());
+        }
+        Ok(result)
     }
 }
 
