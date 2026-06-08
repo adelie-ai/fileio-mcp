@@ -1,34 +1,31 @@
 #![deny(warnings)]
 
-// Error types for the fileio-mcp crate
+// Domain error types for fileio-mcp operations.
+// Protocol-level dispatch is now owned by mcp-core.
 
 use thiserror::Error;
 
-/// Main error type for the fileio-mcp application
+/// Top-level error wrapping all fileio-mcp errors (used by operations and tools.rs).
 #[derive(Error, Debug)]
 pub enum FileIoMcpError {
-    /// File I/O operation errors
-    #[error("File I/O error: {0}")]
+    /// File I/O operation errors — tool-level failures (isError content).
+    #[error("{0}")]
     FileIo(#[from] FileIoError),
 
-    /// JSON serialization/deserialization errors
+    /// JSON serialization/deserialization errors — internal fault.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// MCP protocol errors
-    #[error("MCP protocol error: {0}")]
-    Mcp(#[from] McpError),
+    /// Invalid tool parameters — maps to mcp-core InvalidParams (JSON-RPC -32602).
+    #[error("{0}")]
+    InvalidParams(String),
 
-    /// Transport layer errors
-    #[error("Transport error: {0}")]
-    Transport(#[from] TransportError),
-
-    /// IO errors
+    /// IO errors — tool-level failures.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// File I/O operation errors
+/// File I/O operation errors.
 #[derive(Error, Debug)]
 pub enum FileIoError {
     /// File not found
@@ -68,51 +65,37 @@ pub enum FileIoError {
     RegexError(#[from] regex::Error),
 }
 
-/// MCP protocol errors
+/// MCP protocol errors — kept for backward-compat with tools.rs.
+/// `InvalidToolParameters` maps to a struct-param error (-32602 via mcp-core).
+/// `ToolNotFound` is a tool-level error (isError content).
 #[derive(Error, Debug)]
 pub enum McpError {
-    /// Invalid protocol version
-    #[error("Unsupported protocol version: {0}")]
-    InvalidProtocolVersion(String),
-
-    /// Invalid JSON-RPC message
-    #[error("Invalid JSON-RPC message: {0}")]
-    InvalidJsonRpc(String),
-
-    /// Tool not found
+    /// Tool not found — tool-level error (isError).
     #[error("Tool not found: {0}")]
     ToolNotFound(String),
 
-    /// Invalid tool parameters
+    /// Invalid tool parameters — protocol-level invalid params.
     #[error("Invalid tool parameters: {0}")]
     InvalidToolParameters(String),
 }
 
-/// Transport layer errors
-#[derive(Error, Debug)]
-pub enum TransportError {
-    /// WebSocket connection error
-    #[error("WebSocket connection error: {0}")]
-    WebSocket(String),
-
-    /// Invalid message format
-    #[error("Invalid message format: {0}")]
-    InvalidMessage(String),
-
-    /// Connection closed
-    #[error("Connection closed")]
-    ConnectionClosed,
-
-    /// IO error in transport
-    #[error("Transport IO error: {0}")]
-    Io(#[from] std::io::Error),
+impl From<McpError> for FileIoMcpError {
+    fn from(e: McpError) -> Self {
+        match e {
+            // Unknown tool is a tool-level error, not a parameter error.
+            // Wrap it as FileIo so it flows through to CallError::Tool.
+            McpError::ToolNotFound(msg) => FileIoMcpError::FileIo(FileIoError::NotFound(msg)),
+            // Bad parameter shape is a parameter error → -32602.
+            McpError::InvalidToolParameters(msg) => FileIoMcpError::InvalidParams(msg),
+        }
+    }
 }
 
-/// Result type alias for convenience
+/// Result type alias for convenience.
 pub type Result<T> = std::result::Result<T, FileIoMcpError>;
 
 impl FileIoError {
-    /// Map a std::io::Error to a more specific FileIoError based on the error kind
+    /// Map a std::io::Error to a more specific FileIoError based on the error kind.
     pub fn from_io_error(operation: &str, path: &str, error: std::io::Error) -> Self {
         use std::io::ErrorKind;
         match error.kind() {
@@ -130,10 +113,7 @@ impl FileIoError {
                 "Invalid input for {}: {} ({})",
                 operation, path, error
             )),
-            _ => {
-                // For other errors, include the original error message
-                FileIoError::WriteError(format!("Failed to {} {}: {}", operation, path, error))
-            }
+            _ => FileIoError::WriteError(format!("Failed to {} {}: {}", operation, path, error)),
         }
     }
 }
