@@ -7,18 +7,23 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+// Numeric and boolean fields use `crate::coerce` deserializers so an integer
+// sent as a whole-valued float (`3.0`) or a decimal string (`"3"`), or a bool
+// sent as `"true"`/`1`, is accepted — matching the leniency of the manually
+// parsed tools — while genuinely invalid values (fractional/negative line
+// numbers, non-numeric strings) are still rejected. See `crate::coerce`.
 #[derive(Debug, Deserialize)]
 pub struct EditFileRequest {
     pub path: String,
     pub edits: Vec<EditOperation>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::coerce::de_bool")]
     pub create_if_missing: bool,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::coerce::de_bool")]
     pub dry_run: bool,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::coerce::de_bool")]
     pub return_content: bool,
 }
 
@@ -28,54 +33,83 @@ pub enum EditOperation {
     InsertAfter {
         search: String,
         text: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "crate::coerce::de_bool")]
         use_regex: bool,
-        #[serde(default = "default_occurrence")]
+        #[serde(
+            default = "default_occurrence",
+            deserialize_with = "crate::coerce::de_u32"
+        )]
         occurrence: u32,
-        #[serde(default = "default_require_match")]
+        #[serde(
+            default = "default_require_match",
+            deserialize_with = "crate::coerce::de_bool"
+        )]
         require_match: bool,
     },
     InsertBefore {
         search: String,
         text: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "crate::coerce::de_bool")]
         use_regex: bool,
-        #[serde(default = "default_occurrence")]
+        #[serde(
+            default = "default_occurrence",
+            deserialize_with = "crate::coerce::de_u32"
+        )]
         occurrence: u32,
-        #[serde(default = "default_require_match")]
+        #[serde(
+            default = "default_require_match",
+            deserialize_with = "crate::coerce::de_bool"
+        )]
         require_match: bool,
     },
     Replace {
         search: String,
         text: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "crate::coerce::de_bool")]
         use_regex: bool,
-        #[serde(default = "default_occurrence")]
+        #[serde(
+            default = "default_occurrence",
+            deserialize_with = "crate::coerce::de_u32"
+        )]
         occurrence: u32,
-        #[serde(default = "default_require_match")]
+        #[serde(
+            default = "default_require_match",
+            deserialize_with = "crate::coerce::de_bool"
+        )]
         require_match: bool,
     },
     Delete {
         search: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "crate::coerce::de_bool")]
         use_regex: bool,
-        #[serde(default = "default_occurrence")]
+        #[serde(
+            default = "default_occurrence",
+            deserialize_with = "crate::coerce::de_u32"
+        )]
         occurrence: u32,
-        #[serde(default = "default_require_match")]
+        #[serde(
+            default = "default_require_match",
+            deserialize_with = "crate::coerce::de_bool"
+        )]
         require_match: bool,
     },
 
     InsertAtLine {
+        #[serde(deserialize_with = "crate::coerce::de_u64")]
         line: u64,
         text: String,
     },
     ReplaceLines {
+        #[serde(deserialize_with = "crate::coerce::de_u64")]
         start_line: u64,
+        #[serde(deserialize_with = "crate::coerce::de_u64")]
         end_line: u64,
         text: String,
     },
     DeleteLines {
+        #[serde(deserialize_with = "crate::coerce::de_u64")]
         start_line: u64,
+        #[serde(deserialize_with = "crate::coerce::de_u64")]
         end_line: u64,
     },
 }
