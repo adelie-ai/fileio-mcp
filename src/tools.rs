@@ -99,19 +99,19 @@ impl ToolRegistry {
                             "description": "Path to the file to read. Must exist and be readable. Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to read a specific file, use an absolute path or verify the working directory first."
                         },
                         "start_line": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Starting line number (1-based, inclusive). Use with end_line for range, or with line_count for count-based reading."
                         },
                         "end_line": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Ending line number (1-based, inclusive). Used with start_line to define a range."
                         },
                         "line_count": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Number of lines to read starting from start_line. Alternative to end_line for count-based reading."
                         },
                         "start_offset": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Starting line offset (0-based index) as alternative to start_line. Less commonly used."
                         }
                     },
@@ -291,7 +291,7 @@ impl ToolRegistry {
                             "description": "Root directory to start searching from. Default: current directory ('.'). Use absolute paths to avoid ambiguity - relative paths are resolved from the current working directory, which may not be the directory you expect. If you need to search a specific directory, use an absolute path or verify the working directory first."
                         },
                         "max_depth": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Maximum directory depth to search. 0 = only root, 1 = root + immediate children, etc. If not specified, searches all depths."
                         },
                         "file_type": {
@@ -326,11 +326,11 @@ impl ToolRegistry {
                             "description": "If true, treat pattern as a regular expression. If false, treat as literal string. Default: false (literal matching)."
                         },
                         "max_count": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Maximum number of matches to return per file. Useful for limiting output. If not specified, returns all matches."
                         },
                         "max_depth": {
-                            "type": "number",
+                            "type": "integer",
                             "description": "Maximum directory depth to search. 0 = only specified path, 1 = path + immediate children, etc. If not specified, searches all depths."
                         },
                         "include_hidden": {
@@ -388,11 +388,11 @@ impl ToolRegistry {
                                     "search": {"type": "string"},
                                     "text": {"type": "string"},
                                     "use_regex": {"type": "boolean"},
-                                    "occurrence": {"type": "number"},
+                                    "occurrence": {"type": "integer"},
                                     "require_match": {"type": "boolean"},
-                                    "line": {"type": "number", "description": "1-based line number"},
-                                    "start_line": {"type": "number", "description": "1-based start line"},
-                                    "end_line": {"type": "number", "description": "1-based end line"}
+                                    "line": {"type": "integer", "description": "1-based line number"},
+                                    "start_line": {"type": "integer", "description": "1-based start line"},
+                                    "end_line": {"type": "integer", "description": "1-based end line"}
                                 },
                                 "required": ["op"]
                             }
@@ -707,22 +707,37 @@ impl ToolRegistry {
         Ok(paths)
     }
 
+    /// Parse an optional non-negative integer argument.
+    ///
+    /// Absent or explicitly-null values yield `None`. A present value is coerced
+    /// from any lossless encoding (integer, whole-valued float, decimal string)
+    /// via [`crate::coerce::value_to_u64`]; a genuinely invalid value (negative,
+    /// fractional, out of range, non-numeric) is an error rather than a silent
+    /// `None`, so a caller's constraint is never dropped without notice.
     fn parse_optional_u64(args: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u64>> {
         match args.get(key) {
-            None => Ok(None),
-            Some(v) => {
-                if v.is_null() {
-                    return Ok(None);
-                }
-                if let Some(n) = v.as_u64() {
-                    return Ok(Some(n));
-                }
-                Err(crate::error::McpError::InvalidToolParameters(format!(
-                    "{} must be a non-negative integer",
-                    key
-                ))
-                .into())
-            }
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => crate::coerce::value_to_u64(v).map(Some).map_err(|reason| {
+                crate::error::McpError::InvalidToolParameters(format!("{key} {reason}")).into()
+            }),
+        }
+    }
+
+    /// Parse an optional boolean argument, coercing lossless encodings
+    /// (`"true"`/`"false"`/`"1"`/`"0"`, `1`/`0`) via
+    /// [`crate::coerce::value_to_bool`]. Absent or null yields `None`; a
+    /// present-but-uncoercible value is an error instead of silently falling
+    /// back to the default. Call `.unwrap_or(default)` on the result to keep a
+    /// tool's default-when-omitted behaviour.
+    fn parse_optional_bool(
+        args: &serde_json::Map<String, Value>,
+        key: &str,
+    ) -> Result<Option<bool>> {
+        match args.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => crate::coerce::value_to_bool(v).map(Some).map_err(|reason| {
+                crate::error::McpError::InvalidToolParameters(format!("{key} {reason}")).into()
+            }),
         }
     }
 
@@ -780,10 +795,7 @@ impl ToolRegistry {
                             "Missing required parameter: content".to_string(),
                         )
                     })?;
-                let append = args
-                    .get("append")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let append = Self::parse_optional_bool(args, "append")?.unwrap_or(false);
 
                 crate::operations::write_file::write_file(path, content, append)?;
 
@@ -950,10 +962,7 @@ impl ToolRegistry {
                     return Self::silent_success("Directory(ies) created successfully");
                 }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                let recursive = args
-                    .get("recursive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(true);
 
                 crate::operations::mkdir::mkdir(&path_refs, recursive)?;
 
@@ -973,14 +982,9 @@ impl ToolRegistry {
                 if self.guard.is_denied(path) {
                     return Self::not_found_error(path);
                 }
-                let recursive = args
-                    .get("recursive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let include_hidden = args
-                    .get("include_hidden")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(false);
+                let include_hidden =
+                    Self::parse_optional_bool(args, "include_hidden")?.unwrap_or(false);
 
                 let entries =
                     crate::operations::list_dir::list_directory(path, recursive, include_hidden)?;
@@ -1009,10 +1013,7 @@ impl ToolRegistry {
                 {
                     return Self::not_found_error(root_path);
                 }
-                let max_depth = args
-                    .get("max_depth")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
+                let max_depth = Self::parse_optional_u64(args, "max_depth")?.map(|v| v as usize);
                 let file_type = args.get("file_type").and_then(|v| v.as_str());
 
                 let matches =
@@ -1044,33 +1045,17 @@ impl ToolRegistry {
                 if self.guard.is_denied(path) {
                     return Self::not_found_error(path);
                 }
-                let case_sensitive = args
-                    .get("case_sensitive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                let use_regex = args
-                    .get("use_regex")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let max_count = args.get("max_count").and_then(|v| v.as_u64());
-                let max_depth = args
-                    .get("max_depth")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-                let include_hidden = args
-                    .get("include_hidden")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let case_sensitive =
+                    Self::parse_optional_bool(args, "case_sensitive")?.unwrap_or(true);
+                let use_regex = Self::parse_optional_bool(args, "use_regex")?.unwrap_or(false);
+                let max_count = Self::parse_optional_u64(args, "max_count")?;
+                let max_depth = Self::parse_optional_u64(args, "max_depth")?.map(|v| v as usize);
+                let include_hidden =
+                    Self::parse_optional_bool(args, "include_hidden")?.unwrap_or(false);
                 let file_glob = args.get("file_glob").and_then(|v| v.as_str());
                 let exclude_glob = args.get("exclude_glob").and_then(|v| v.as_str());
-                let whole_word = args
-                    .get("whole_word")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let multiline = args
-                    .get("multiline")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let whole_word = Self::parse_optional_bool(args, "whole_word")?.unwrap_or(false);
+                let multiline = Self::parse_optional_bool(args, "multiline")?.unwrap_or(false);
 
                 let matches = crate::operations::find_in_files::find_in_files(
                     &crate::operations::find_in_files::FindInFilesParams {
@@ -1098,9 +1083,12 @@ impl ToolRegistry {
                 }))
             }
             "fileio_edit_file" => {
-                let req: crate::operations::edit_file::EditFileRequest =
-                    serde_json::from_value(serde_json::Value::Object(args.clone()))
-                        .map_err(crate::error::FileIoMcpError::Json)?;
+                // A malformed edit request is a parameter error (-32602), not an
+                // internal JSON fault — surface the coercion/shape message as such.
+                let req: crate::operations::edit_file::EditFileRequest = serde_json::from_value(
+                    serde_json::Value::Object(args.clone()),
+                )
+                .map_err(|e| crate::error::McpError::InvalidToolParameters(e.to_string()))?;
 
                 // Denied edits return a synthetic EditFileResult matching the
                 // real shape — `changed: false, applied_edits: 0` looks
@@ -1184,10 +1172,7 @@ impl ToolRegistry {
                 }
 
                 let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
-                let recursive = args
-                    .get("recursive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(false);
 
                 let results = crate::operations::cp::cp(&source_refs, destination, recursive)?;
                 Ok(serde_json::json!({
@@ -1264,11 +1249,8 @@ impl ToolRegistry {
                 }
 
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                let recursive = args
-                    .get("recursive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(false);
+                let force = Self::parse_optional_bool(args, "force")?.unwrap_or(false);
 
                 let results = crate::operations::rm::rm(&path_refs, recursive, force)?;
                 Ok(serde_json::json!({
@@ -1300,10 +1282,7 @@ impl ToolRegistry {
                 }
 
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-                let recursive = args
-                    .get("recursive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(false);
 
                 let results = crate::operations::rmdir::rmdir(&path_refs, recursive)?;
                 Ok(serde_json::json!({
@@ -1680,6 +1659,210 @@ mod tests {
         let msg = format!("{}", res.err().unwrap());
         assert!(msg.to_lowercase().contains("start_line"));
         assert!(msg.to_lowercase().contains("non-negative"));
+    }
+
+    /// Issue #10 regression: a valid line number delivered as a JSON float
+    /// (`200.0`) or a decimal string (`"200"`) — as LLM tool-call plumbing
+    /// frequently encodes it — must be accepted, not rejected with the
+    /// contradictory "must be a non-negative integer".
+    #[tokio::test]
+    async fn read_lines_accepts_float_and_string_start_line() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "one\ntwo\nthree\nfour").unwrap();
+        let path = file.path().to_str().unwrap();
+        let registry = ToolRegistry::new();
+
+        for start in [serde_json::json!(2.0), serde_json::json!("2")] {
+            let args = serde_json::json!({"path": path, "start_line": start});
+            let res = registry
+                .execute_tool("fileio_read_lines", &args)
+                .await
+                .unwrap_or_else(|e| panic!("start_line={start} should be accepted: {e}"));
+            let body: Vec<String> =
+                serde_json::from_str(res["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body, vec!["two", "three", "four"], "start_line={start}");
+        }
+    }
+
+    /// A fractional line number is genuinely invalid and must still be rejected
+    /// — coercion is lossless-only, not "round whatever we get".
+    #[tokio::test]
+    async fn read_lines_rejects_fractional_start_line() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "a\nb").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let registry = ToolRegistry::new();
+        let args = serde_json::json!({"path": path, "start_line": 1.5});
+        let res = registry.execute_tool("fileio_read_lines", &args).await;
+        assert!(res.is_err(), "1.5 is not a whole line number");
+        let msg = format!("{}", res.err().unwrap()).to_lowercase();
+        assert!(
+            msg.contains("start_line") && msg.contains("whole"),
+            "got: {msg}"
+        );
+    }
+
+    /// The `edit_file` serde path must coerce the same way the manually-parsed
+    /// tools do: line numbers sent as floats/strings are accepted.
+    #[tokio::test]
+    async fn edit_file_coerces_float_line_numbers() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "one\ntwo\nthree").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let registry = ToolRegistry::new();
+        let args = serde_json::json!({
+            "path": path,
+            "edits": [{"op": "replace_lines", "start_line": 2.0, "end_line": "2", "text": "TWO"}],
+        });
+        let res = registry
+            .execute_tool("fileio_edit_file", &args)
+            .await
+            .expect("float/string line numbers should be accepted");
+        assert!(res["content"][0]["text"].as_str().is_some());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "one\nTWO\nthree\n");
+    }
+
+    /// Issue #10 reported that *both* windowing modes failed — `start_line` +
+    /// `end_line` and `start_line` + `line_count`. Cover both with float and
+    /// string encodings of every bound.
+    #[tokio::test]
+    async fn read_lines_both_windowing_modes_accept_encoded_ints() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "one\ntwo\nthree\nfour\nfive").unwrap();
+        let path = file.path().to_str().unwrap();
+        let registry = ToolRegistry::new();
+
+        // start_line + end_line, as floats then as strings.
+        for (s, e) in [
+            (serde_json::json!(2.0), serde_json::json!(3.0)),
+            (serde_json::json!("2"), serde_json::json!("3")),
+        ] {
+            let args = serde_json::json!({"path": path, "start_line": s, "end_line": e});
+            let res = registry
+                .execute_tool("fileio_read_lines", &args)
+                .await
+                .unwrap_or_else(|err| panic!("range mode {s}..{e} should be accepted: {err}"));
+            let body: Vec<String> =
+                serde_json::from_str(res["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body, vec!["two", "three"], "range mode {s}..{e}");
+        }
+
+        // start_line + line_count, as float then as string.
+        for (s, c) in [
+            (serde_json::json!(2.0), serde_json::json!(2.0)),
+            (serde_json::json!("2"), serde_json::json!("2")),
+        ] {
+            let args = serde_json::json!({"path": path, "start_line": s, "line_count": c});
+            let res = registry
+                .execute_tool("fileio_read_lines", &args)
+                .await
+                .unwrap_or_else(|err| panic!("count mode start={s} count={c}: {err}"));
+            let body: Vec<String> =
+                serde_json::from_str(res["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body, vec!["two", "three"], "count mode start={s} count={c}");
+        }
+    }
+
+    /// `max_count` is a formerly silent-drop site: a string/float used to be
+    /// discarded (constraint ignored). It must now take effect (proving the
+    /// coercion is real, not a no-op) and reject genuinely invalid input rather
+    /// than silently falling back to "no limit".
+    #[tokio::test]
+    async fn find_in_files_coerces_and_rejects_max_count() {
+        let dir = std::env::temp_dir().join("fileio_max_count_coerce_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("hay.txt"), "needle\nneedle\nneedle\n").unwrap();
+        let registry = ToolRegistry::new();
+        let dir_s = dir.to_str().unwrap();
+
+        let count_matches = |v: &Value| -> usize {
+            serde_json::from_str::<Vec<Value>>(v["content"][0]["text"].as_str().unwrap())
+                .unwrap()
+                .len()
+        };
+
+        // String "1" must cap to a single match (before the fix it was dropped
+        // and all three came back).
+        let capped = registry
+            .execute_tool(
+                "fileio_find_in_files",
+                &serde_json::json!({"path": dir_s, "pattern": "needle", "max_count": "1"}),
+            )
+            .await
+            .expect("string max_count should coerce");
+        assert_eq!(
+            count_matches(&capped),
+            1,
+            "string max_count must take effect"
+        );
+
+        // Float 2.0 caps to two.
+        let capped2 = registry
+            .execute_tool(
+                "fileio_find_in_files",
+                &serde_json::json!({"path": dir_s, "pattern": "needle", "max_count": 2.0}),
+            )
+            .await
+            .expect("float max_count should coerce");
+        assert_eq!(
+            count_matches(&capped2),
+            2,
+            "float max_count must take effect"
+        );
+
+        // Garbage must error, not silently mean "no limit".
+        let bad = registry
+            .execute_tool(
+                "fileio_find_in_files",
+                &serde_json::json!({"path": dir_s, "pattern": "needle", "max_count": "lots"}),
+            )
+            .await;
+        assert!(bad.is_err(), "non-numeric max_count must error, not drop");
+        assert!(format!("{}", bad.err().unwrap()).contains("max_count"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Boolean flags are formerly silent-default sites. A stringified bool must
+    /// take effect; a value that is neither a bool nor a lossless encoding of
+    /// one must error rather than silently using the default.
+    #[tokio::test]
+    async fn write_file_bool_flag_coerces_and_rejects_garbage() {
+        let dir = std::env::temp_dir().join("fileio_bool_coerce_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("f.txt");
+        let target_s = target.to_str().unwrap();
+        std::fs::write(&target, "base\n").unwrap();
+        let registry = ToolRegistry::new();
+
+        // append: "true" (string) must append, not overwrite.
+        registry
+            .execute_tool(
+                "fileio_write_file",
+                &serde_json::json!({"path": target_s, "content": "added\n", "append": "true"}),
+            )
+            .await
+            .expect("string bool should coerce");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "base\nadded\n");
+
+        // append: 2 is neither a bool nor 0/1 — must error, not silently
+        // default to overwrite (which would destroy the file).
+        let bad = registry
+            .execute_tool(
+                "fileio_write_file",
+                &serde_json::json!({"path": target_s, "content": "x", "append": 2}),
+            )
+            .await;
+        assert!(bad.is_err(), "ambiguous bool must error");
+        assert!(format!("{}", bad.err().unwrap()).contains("append"));
+        // The failed call must not have touched the file.
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "base\nadded\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// End-to-end: a read of a file inside a denied directory must look

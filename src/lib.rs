@@ -4,6 +4,7 @@
 // Library crate for fileio-mcp.
 // Protocol dispatch, transport framing and CLI are provided by mcp-core.
 
+pub mod coerce;
 pub mod error;
 pub mod operations;
 pub mod path_guard;
