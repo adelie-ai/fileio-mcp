@@ -234,6 +234,28 @@ fn run_case(test_name: &str, f: impl FnOnce(&mut McpStdioClient, &TempDir)) {
 // -----------------
 
 #[test]
+fn initialize_reports_non_empty_instructions() {
+    let mut client = McpStdioClient::start();
+    let resp = client
+        .call(
+            "initialize",
+            json!({"protocolVersion":"2025-11-25","capabilities":{}}),
+        )
+        .expect("initialize");
+    let instructions = resp["result"]["instructions"]
+        .as_str()
+        .expect("initialize result must include an instructions string");
+    assert!(
+        !instructions.trim().is_empty(),
+        "instructions must not be empty, got: {instructions:?}"
+    );
+    assert!(
+        instructions.contains("fileio_find_in_files"),
+        "instructions should name key tools, got: {instructions}"
+    );
+}
+
+#[test]
 fn fileio_write_file_overwrite() {
     run_case("fileio_write_file_overwrite", |client, root| {
         let case = case_dir(root, "fileio_write_file_overwrite");
