@@ -10,7 +10,7 @@
 use clap::Args;
 use fileio_mcp::path_guard::PathGuard;
 use fileio_mcp::service::FileIoService;
-use mcp_core::{Result, ServerConfig};
+use mcp_core::Result;
 
 /// fileio-mcp-specific serve flags. mcp-core flattens `CommonServeArgs`
 /// (including `--transport` / `--mode` alias) into the `serve` subcommand
@@ -28,10 +28,7 @@ struct Local {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = ServerConfig::new("fileio-mcp", env!("CARGO_PKG_VERSION"))
-        // Websocket is nice to support but not required; keep it available.
-        // Unix socket is opt-in via --transport unix.
-        .with_unix();
+    let config = fileio_mcp::server_config();
 
     mcp_core::run::<Local, FileIoService, _, _>(config, |local| async move {
         let guard = PathGuard::new(&local.block_paths, local.block_file.as_deref());
