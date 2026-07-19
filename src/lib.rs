@@ -11,6 +11,8 @@ pub mod path_guard;
 pub mod service;
 pub mod tools;
 
+pub use service::FileIoService;
+
 use mcp_core::ServerConfig;
 
 /// Model-facing server description returned in the MCP `initialize` response.
@@ -43,6 +45,18 @@ pub fn server_config() -> ServerConfig {
     ServerConfig::new("fileio-mcp", env!("CARGO_PKG_VERSION"))
         .instructions(SERVER_INSTRUCTIONS)
         .with_unix()
+}
+
+/// Construct the Service with built-in defaults for in-process hosting (da#538 Phase C).
+///
+/// Why: a client can host fileio-mcp in-process without launching the CLI. The
+/// service is built with the same zero-config defaults as the standalone binary
+/// started with no extra flags - the hardcoded sensitive-path deny-list (see
+/// [`path_guard`]) with no additional `--block-path` / `--block-file` entries.
+/// The binary routes its default construction through this same function, so the
+/// in-process and standalone hosting paths cannot drift.
+pub fn build_service() -> FileIoService {
+    FileIoService::new()
 }
 
 #[cfg(test)]
@@ -92,5 +106,52 @@ mod tests {
                 "instructions should mention '{term}', got: {text}"
             );
         }
+    }
+
+    /// Acceptance (da#538 Phase C): the zero-config constructor yields a service
+    /// that advertises the fileio tool set, so an in-process host gets a working
+    /// server with no CLI arguments or configuration.
+    #[test]
+    fn build_service_exposes_core_tools() {
+        use mcp_core::McpService;
+        let tools = build_service().tools();
+        assert!(!tools.is_empty(), "built-in service must expose tools");
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        for needle in [
+            "fileio_read_lines",
+            "fileio_write_file",
+            "fileio_edit_file",
+            "fileio_find_in_files",
+            "fileio_find_files",
+        ] {
+            assert!(
+                names.contains(&needle),
+                "built-in service should expose {needle}, got: {names:?}"
+            );
+        }
+    }
+
+    /// Acceptance (da#538 Phase C): `build_service` is the pure zero-config
+    /// default - it exposes exactly the tool surface the binary advertises when
+    /// launched with no `--block-path` / `--block-file` flags
+    /// ([`FileIoService::default`]), so the in-process and standalone hosting
+    /// paths cannot drift.
+    #[test]
+    fn build_service_matches_binary_default() {
+        use mcp_core::McpService;
+        let built: Vec<String> = build_service()
+            .tools()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        let default: Vec<String> = FileIoService::default()
+            .tools()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            built, default,
+            "build_service must match the binary's no-flag default"
+        );
     }
 }

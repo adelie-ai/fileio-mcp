@@ -31,8 +31,16 @@ async fn main() -> Result<()> {
     let config = fileio_mcp::server_config();
 
     mcp_core::run::<Local, FileIoService, _, _>(config, |local| async move {
-        let guard = PathGuard::new(&local.block_paths, local.block_file.as_deref());
-        Ok(FileIoService::with_guard(guard))
+        // Zero-config default construction routes through `build_service` so the
+        // in-process host (da#538 Phase C) and the binary share one default path
+        // and cannot drift. `--block-path` / `--block-file` layer extra deny-list
+        // entries on top of the built-in defaults.
+        if local.block_paths.is_empty() && local.block_file.is_none() {
+            Ok(fileio_mcp::build_service())
+        } else {
+            let guard = PathGuard::new(&local.block_paths, local.block_file.as_deref());
+            Ok(FileIoService::with_guard(guard))
+        }
     })
     .await
 }
