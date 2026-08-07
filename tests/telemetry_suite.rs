@@ -9,10 +9,13 @@
 //! server's own code together, and only a real process boundary proves
 //! neither side leaked a path.
 
+mod support;
+
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use support::sentinel_tool_calls;
 use tempfile::TempDir;
 
 /// Spawn `fileio-mcp serve --mode stdio` with `extra_args` and `env`, drive
@@ -151,48 +154,86 @@ fn stdout_carries_only_json_rpc_at_trace_log_level() {
 }
 
 /// Acceptance (mcp-core#40, epic D10): `tool_call_records_no_arguments`.
-/// Neither a real path nor a denied path reaches a span field or an INFO
-/// line, including the guard-denial path — a rejection is where a path
-/// most naturally gets logged, since making the denial itself invisible is
-/// this server's whole design (see `path_guard`'s module doc).
+/// No content reaches an INFO console line for *any* registered tool, not
+/// just one. Table-driven over [`support::sentinel_tool_calls`] -
+/// `support::assert_table_covers_every_tool` fails this test outright if a
+/// tool is added to `tools.rs` without a matching table entry, so the
+/// coverage cannot quietly fall behind the dispatch again the way a
+/// single-tool version of this test once did.
 ///
-/// The RUST_LOG=trace run is a positive control: it proves the sentinels
-/// really do surface somewhere in this harness's capture (mcp-core logs
-/// tool arguments at DEBUG), so the RUST_LOG=info absence assertions above
-/// are not passing because nothing was ever captured.
+/// The RUST_LOG=trace run is a positive control per content-bearing tool:
+/// it proves each one's sentinel really does surface somewhere in this
+/// harness's capture (mcp-core logs tool arguments at DEBUG), so the
+/// RUST_LOG=info absence assertion above is not passing because nothing
+/// was ever captured for that tool.
 #[test]
 fn tool_call_records_no_arguments() {
     let temp = TempDir::new().expect("create temp dir");
-    let normal_dir = temp.path().join("SENTINEL-NORMAL-8f2c1");
-    std::fs::create_dir_all(&normal_dir).expect("create normal dir");
-    let normal_file = normal_dir.join("visible.txt");
-    std::fs::write(&normal_file, "hello\n").expect("write normal file");
-    let normal_path = normal_file.to_string_lossy().to_string();
+    let calls = sentinel_tool_calls(temp.path());
+    support::assert_table_covers_every_tool(&calls);
 
-    // Denied via an extra --block-path rather than a real HOME-relative
-    // default entry, so the denial is deterministic regardless of the
-    // environment the test runs in.
+    let requests: Vec<Value> = calls
+        .iter()
+        .map(|c| json!({"method": "tools/call", "params": {"name": c.name, "arguments": c.arguments}}))
+        .collect();
+
+    let (_stdout, info_stderr) = run_and_capture(&[], &[("RUST_LOG", "info")], &requests);
+    let mut leaks = Vec::new();
+    for call in &calls {
+        if !call.carries_sentinel {
+            continue;
+        }
+        let sentinel = support::sentinel_for(call.name);
+        if info_stderr.contains(&sentinel) {
+            leaks.push(call.name);
+        }
+    }
+    assert!(
+        leaks.is_empty(),
+        "these tools' sentinel reached stderr at RUST_LOG=info: {leaks:?}\n{info_stderr}"
+    );
+
+    let (_stdout2, trace_stderr) = run_and_capture(&[], &[("RUST_LOG", "trace")], &requests);
+    let mut missing_controls = Vec::new();
+    for call in &calls {
+        if !call.carries_sentinel {
+            continue;
+        }
+        let sentinel = support::sentinel_for(call.name);
+        if !trace_stderr.contains(&sentinel) {
+            missing_controls.push(call.name);
+        }
+    }
+    assert!(
+        missing_controls.is_empty(),
+        "expected every content-bearing tool's sentinel to surface at \
+         RUST_LOG=trace as a positive control (tool arguments are \
+         DEBUG-level content per D10); these tools' sentinels never \
+         appeared, so the RUST_LOG=info assertion above is not meaningful \
+         for them: {missing_controls:?}\n{trace_stderr}"
+    );
+}
+
+/// Acceptance (mcp-core#40, epic D10): a guard denial is where a path most
+/// naturally gets logged, since making the denial itself invisible is this
+/// server's whole design (see `path_guard`'s module doc). One representative
+/// tool is enough here: every tool's denial branch routes through the same
+/// tool-agnostic `PathGuard::is_denied` plus mcp-core's uniform
+/// `CallError::Tool` -> DEBUG demotion (verified in `src/service.rs` and
+/// mcp-core's dispatch layer), so this is not 27 independent code paths the
+/// way the operation functions in `tool_call_records_no_arguments` are.
+#[test]
+fn denied_read_records_no_path() {
     let denied_path = "/home/sentinel/SECRET-FILE-NAME";
-
-    let requests = [
-        json!({
-            "method": "tools/call",
-            "params": {"name": "fileio_read_lines", "arguments": {"path": normal_path}},
-        }),
-        json!({
-            "method": "tools/call",
-            "params": {"name": "fileio_read_lines", "arguments": {"path": denied_path}},
-        }),
-    ];
+    let requests = [json!({
+        "method": "tools/call",
+        "params": {"name": "fileio_read_lines", "arguments": {"path": denied_path}},
+    })];
 
     let (_stdout, info_stderr) = run_and_capture(
         &["--block-path", "/home/sentinel/"],
         &[("RUST_LOG", "info")],
         &requests,
-    );
-    assert!(
-        !info_stderr.contains("SENTINEL-NORMAL"),
-        "a real path reached stderr at RUST_LOG=info:\n{info_stderr}"
     );
     assert!(
         !info_stderr.contains("SECRET-FILE-NAME"),
@@ -203,12 +244,6 @@ fn tool_call_records_no_arguments() {
         &["--block-path", "/home/sentinel/"],
         &[("RUST_LOG", "trace")],
         &requests,
-    );
-    assert!(
-        trace_stderr.contains("SENTINEL-NORMAL"),
-        "expected the real path to surface at RUST_LOG=trace as a positive \
-         control (tool arguments are DEBUG-level content per D10); \
-         got none, so the RUST_LOG=info assertion above is not meaningful:\n{trace_stderr}"
     );
     assert!(
         trace_stderr.contains("SECRET-FILE-NAME"),
