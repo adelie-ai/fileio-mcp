@@ -8,6 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use mcp_core::telemetry::metrics::{self, Label};
+
 /// A deny-list entry: either an exact file or a directory prefix.
 #[derive(Debug, Clone)]
 enum DenyEntry {
@@ -15,6 +17,46 @@ enum DenyEntry {
     File(PathBuf),
     /// Block access to anything under this directory (inclusive).
     Directory(PathBuf),
+}
+
+/// Which shape of deny-list entry matched a denied path.
+///
+/// This is the bounded `reason` a guard rejection records — never the entry
+/// itself. An entry (even a built-in default) is still a path, and D10 keeps
+/// a path off every metric label and every log field alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DenyReason {
+    /// An exact-file entry matched.
+    File,
+    /// A directory-prefix entry matched.
+    Directory,
+}
+
+impl DenyReason {
+    fn as_label(self) -> &'static str {
+        match self {
+            DenyReason::File => "file",
+            DenyReason::Directory => "directory",
+        }
+    }
+}
+
+/// Metric name for a path the guard denied, labelled by [`DenyReason`].
+///
+/// mcp-core's own dispatch already counts every tool call by name and
+/// outcome (`mcp.tools.call`), but a denial is invisible to that counter by
+/// design: `execute_tool` returns a synthetic success or a plain "not
+/// found", so the call looks ordinary from the dispatch layer's point of
+/// view (see the module doc). This is the one place a rejection becomes
+/// observable at all.
+const GUARD_REJECTIONS_METRIC: &str = "fileio.guard.rejections";
+
+/// Record one guard rejection. `reason` is a two-value enum, so the label
+/// can never grow past the registry's cardinality cap.
+fn record_rejection(reason: DenyReason) {
+    let label = reason.as_label();
+    metrics::increment(GUARD_REJECTIONS_METRIC, &[Label::new("reason", label)]);
+    tracing::debug!(reason = label, "path denied by guard");
 }
 
 /// Immutable path guard built once at startup.
@@ -63,16 +105,29 @@ impl PathGuard {
             let expanded = shellexpand::tilde(file_path).into_owned();
             entries.push(DenyEntry::File(PathBuf::from(&expanded)));
 
-            if let Ok(contents) = std::fs::read_to_string(&expanded) {
-                for line in contents.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line.starts_with('#') {
-                        continue;
+            match std::fs::read_to_string(&expanded) {
+                Ok(contents) => {
+                    for line in contents.lines() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        Self::add_pattern(&mut entries, line);
                     }
-                    Self::add_pattern(&mut entries, line);
                 }
-            } else {
-                eprintln!("warning: could not read block-file: {}", file_path);
+                // The reason and the outcome belong on this line; the path
+                // does not (D10 — a path is content, not an id, a count or a
+                // duration). `outcome` names what the server does about it:
+                // it keeps running with the defaults and any --block-path
+                // extras, just without this file's entries.
+                Err(e) => {
+                    tracing::warn!(
+                        reason = ?e.kind(),
+                        outcome = "block_file_not_loaded",
+                        "could not read the configured block-file; continuing \
+                         without its entries"
+                    );
+                }
             }
         }
 
@@ -107,19 +162,26 @@ impl PathGuard {
     }
 
     /// Check if an already-canonicalized path is denied.
+    ///
+    /// A match records a `fileio.guard.rejections` metric and a DEBUG log
+    /// line, both naming only the shape of entry that matched — never the
+    /// path, and never which specific entry (D10). This is the single
+    /// interception point for every caller in this crate (`is_denied` and
+    /// `filter_paths` both route through it), so it is the one place that
+    /// needs to record the rejection rather than each of the ~25 call sites
+    /// across `tools.rs`.
     pub fn is_denied_canonical(&self, canonical: &Path) -> bool {
         for entry in &self.entries {
-            match entry {
-                DenyEntry::File(denied) => {
-                    if canonical == denied {
-                        return true;
-                    }
+            let reason = match entry {
+                DenyEntry::File(denied) if canonical == denied => Some(DenyReason::File),
+                DenyEntry::Directory(denied) if canonical.starts_with(denied) => {
+                    Some(DenyReason::Directory)
                 }
-                DenyEntry::Directory(denied) => {
-                    if canonical.starts_with(denied) {
-                        return true;
-                    }
-                }
+                DenyEntry::File(_) | DenyEntry::Directory(_) => None,
+            };
+            if let Some(reason) = reason {
+                record_rejection(reason);
+                return true;
             }
         }
         false
@@ -272,7 +334,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Create a real file in ~/.ssh (if it exists) or skip
+        // Create a real file in ~/.ssh (if it exists) or skip. This stays
+        // `eprintln!` rather than a `tracing` macro: it is a test-runner
+        // message about the test environment (no subscriber is installed in
+        // a unit-test process, so a tracing event here would go nowhere),
+        // not a server diagnostic. It names no path beyond the fixed
+        // `~/.ssh`, so D10 does not apply to it.
         let ssh_dir = PathBuf::from(home()).join(".ssh");
         if !ssh_dir.exists() {
             eprintln!("SKIP: ~/.ssh does not exist");
