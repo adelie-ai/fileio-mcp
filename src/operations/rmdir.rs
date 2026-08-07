@@ -8,6 +8,7 @@ use std::path::Path;
 
 /// Remove directories (wrapper around rm with recursive flag)
 /// Can accept a single path or multiple paths
+#[tracing::instrument(skip_all)]
 pub fn rmdir(paths: &[&str], recursive: bool) -> Result<Vec<super::mv::OpResult>> {
     let mut results = Vec::new();
     for path in paths {

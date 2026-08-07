@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 /// Write content to a file
+#[tracing::instrument(skip_all)]
 pub fn write_file(path: &str, content: &str, append: bool) -> Result<()> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {

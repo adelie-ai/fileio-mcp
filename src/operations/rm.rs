@@ -69,6 +69,7 @@ fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
 }
 
 /// Remove files or directories (supports glob patterns and arrays of paths)
+#[tracing::instrument(skip_all)]
 pub fn rm(paths: &[&str], recursive: bool, force: bool) -> Result<Vec<super::mv::OpResult>> {
     let mut all_paths = Vec::new();
 

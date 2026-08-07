@@ -7,6 +7,7 @@ use std::path::Path;
 use tempfile::{NamedTempFile, TempDir};
 
 /// Create a temporary file
+#[tracing::instrument(skip_all)]
 pub fn mktemp_file(template: Option<&str>) -> Result<String> {
     if let Some(tmpl) = template {
         // If template provided, create in specified directory
@@ -47,6 +48,7 @@ pub fn mktemp_file(template: Option<&str>) -> Result<String> {
 }
 
 /// Create a temporary directory
+#[tracing::instrument(skip_all)]
 pub fn mktemp_dir(template: Option<&str>) -> Result<String> {
     if let Some(tmpl) = template {
         // If template provided, create in specified directory

@@ -133,6 +133,7 @@ fn default_require_match() -> bool {
     true
 }
 
+#[tracing::instrument(skip_all)]
 pub fn edit_file(req: EditFileRequest) -> Result<EditFileResult> {
     let expanded_path = shellexpand::full(&req.path)
         .map_err(|e| {

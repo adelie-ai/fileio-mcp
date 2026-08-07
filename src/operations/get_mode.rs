@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Get file mode (permissions) as octal string
 /// Can accept a single path or multiple paths, returns a map of path -> mode
+#[tracing::instrument(skip_all)]
 pub fn get_file_mode(paths: &[&str]) -> Result<std::collections::HashMap<String, String>> {
     let mut results = std::collections::HashMap::new();
     let mut errors = Vec::new();

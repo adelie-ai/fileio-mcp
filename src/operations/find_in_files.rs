@@ -37,6 +37,7 @@ pub struct FindInFilesParams<'a> {
 }
 
 /// Find text in files
+#[tracing::instrument(skip_all)]
 pub fn find_in_files(params: &FindInFilesParams<'_>) -> Result<Vec<Match>> {
     let FindInFilesParams {
         pattern,

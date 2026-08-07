@@ -7,6 +7,7 @@ use std::fs;
 
 /// Create directories (with -p equivalent, i.e., create parent directories)
 /// Can accept a single path or multiple paths
+#[tracing::instrument(skip_all)]
 pub fn mkdir(paths: &[&str], recursive: bool) -> Result<()> {
     let mut errors = Vec::new();
     for path in paths {

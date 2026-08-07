@@ -78,6 +78,7 @@ pub struct OpResult {
 
 /// Copy files or directories (supports glob patterns and arrays of paths)
 /// Returns per-source results instead of failing the whole call for per-file errors.
+#[tracing::instrument(skip_all)]
 pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<Vec<OpResult>> {
     let expanded_dest = shellexpand::full(destination)
         .map_err(|e| {

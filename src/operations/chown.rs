@@ -7,6 +7,7 @@ use std::path::Path;
 
 /// Change file or directory ownership
 /// Can accept a single path or multiple paths
+#[tracing::instrument(skip_all)]
 pub fn chown(paths: &[&str], user: Option<&str>, group: Option<&str>) -> Result<()> {
     let mut errors = Vec::new();
     for path in paths {

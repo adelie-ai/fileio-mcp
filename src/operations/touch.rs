@@ -10,6 +10,7 @@ use std::time::SystemTime;
 
 /// Touch files (create if they don't exist, update timestamp if they do)
 /// Can accept a single path or multiple paths
+#[tracing::instrument(skip_all)]
 pub fn touch(paths: &[&str]) -> Result<()> {
     let mut errors = Vec::new();
     for path in paths {

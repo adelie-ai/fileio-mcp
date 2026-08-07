@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 /// Get the basename (filename) from a path
+#[tracing::instrument(skip_all)]
 pub fn basename(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {
@@ -32,6 +33,7 @@ pub fn basename(path: &str) -> Result<String> {
 }
 
 /// Get the dirname (directory path) from a path
+#[tracing::instrument(skip_all)]
 pub fn dirname(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {
@@ -55,6 +57,7 @@ pub fn dirname(path: &str) -> Result<String> {
 }
 
 /// Get the real (canonical) path, resolving all symlinks
+#[tracing::instrument(skip_all)]
 pub fn realpath(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {
@@ -88,6 +91,7 @@ pub fn realpath(path: &str) -> Result<String> {
 }
 
 /// Read the target of a symbolic link
+#[tracing::instrument(skip_all)]
 pub fn readlink(path: &str) -> Result<String> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {

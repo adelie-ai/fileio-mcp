@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 /// Create a hard link
+#[tracing::instrument(skip_all)]
 pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
     let expanded_target = shellexpand::full(target)
         .map_err(|e| {
@@ -74,6 +75,7 @@ pub fn hard_link(target: &str, link_path: &str) -> Result<()> {
 }
 
 /// Create a symbolic link
+#[tracing::instrument(skip_all)]
 pub fn symlink(target: &str, link_path: &str) -> Result<()> {
     let expanded_link = shellexpand::full(link_path)
         .map_err(|e| {

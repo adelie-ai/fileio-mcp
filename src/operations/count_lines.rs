@@ -17,6 +17,7 @@ pub struct LineCountResult {
 
 /// Count lines in files
 /// Returns a vector of results: { path, status, lines }
+#[tracing::instrument(skip_all)]
 pub fn count_lines(paths: &[&str]) -> Result<Vec<LineCountResult>> {
     let mut results = Vec::new();
     for path in paths {

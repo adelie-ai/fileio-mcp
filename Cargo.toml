@@ -25,6 +25,11 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 tempfile = "3.0"
+# A capturing Layer for the span-field test: it has to read back span fields
+# as the subscriber recorded them, independent of whether a console event
+# ever rendered one. Already in the tree through adelie-telemetry, so this
+# adds no crate.
+tracing-subscriber = "0.3.23"
 
 [features]
 # OTLP export of traces, metrics and log records, off by default. A

@@ -78,6 +78,7 @@ pub struct OpResult {
 
 /// Move or rename files or directories (supports glob patterns and arrays of paths)
 /// Returns per-source results and does not fail the whole call for per-file errors.
+#[tracing::instrument(skip_all)]
 pub fn mv(sources: &[&str], destination: &str) -> Result<Vec<OpResult>> {
     let expanded_dest = shellexpand::full(destination)
         .map_err(|e| {
