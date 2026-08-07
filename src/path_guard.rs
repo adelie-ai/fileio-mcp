@@ -359,4 +359,55 @@ mod tests {
         let misexpanded = format!("/tmp/{}foo/", home());
         assert!(!guard.is_denied(&misexpanded));
     }
+
+    /// Sum, across every label combination, how many times
+    /// `GUARD_REJECTIONS_METRIC` has fired so far. A snapshot delta rather
+    /// than an exact read: this binary's other unit tests share the same
+    /// process-global registry (mcp-core's re-exported facade has no
+    /// per-test handle to inject), and several of them run concurrently and
+    /// also deny paths. Only ever-increasing, so a `>=` comparison against a
+    /// known number of denials this test caused is exact enough to prove
+    /// the wiring without being flaky under `cargo test`'s default
+    /// parallelism.
+    fn guard_rejection_total() -> u64 {
+        mcp_core::telemetry::metrics::global()
+            .snapshot()
+            .counters
+            .iter()
+            .filter(|c| c.name == "fileio.guard.rejections")
+            .map(|c| c.total)
+            .sum()
+    }
+
+    /// Acceptance: a denied path — of both deny-list shapes, an exact file
+    /// and a directory prefix — increments the bounded `reason`-labelled
+    /// counter so an operator can see the guard working without the model
+    /// ever finding out (rejections stay invisible on the wire; this is the
+    /// one place they become observable). An allowed path must not move it.
+    #[test]
+    fn guard_rejection_metric_counts_denials_by_reason() {
+        let guard = PathGuard::new(
+            &[
+                "/tmp/fileio-metric-test-dir/".into(),
+                "/tmp/fileio-metric-test-file.txt".into(),
+            ],
+            None,
+        );
+
+        let before = guard_rejection_total();
+
+        // One directory-prefix denial, one exact-file denial, one allowed
+        // path that must not count.
+        assert!(guard.is_denied("/tmp/fileio-metric-test-dir/secret.txt"));
+        assert!(guard.is_denied("/tmp/fileio-metric-test-file.txt"));
+        assert!(!guard.is_denied("/tmp/fileio-metric-test-allowed.txt"));
+
+        let after = guard_rejection_total();
+        assert!(
+            after >= before + 2,
+            "expected the guard-rejection counter to rise by at least 2 \
+             (one exact-file denial, one directory-prefix denial), \
+             before={before} after={after}"
+        );
+    }
 }
