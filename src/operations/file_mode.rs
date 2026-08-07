@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Set file mode (permissions)
 /// Can accept a single path or multiple paths
+#[tracing::instrument(skip_all)]
 pub fn set_file_mode(paths: &[&str], mode: &str) -> Result<()> {
     let mode_value = parse_mode(mode)?;
     let mut errors = Vec::new();

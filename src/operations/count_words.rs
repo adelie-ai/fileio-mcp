@@ -16,6 +16,7 @@ pub struct WordCountResult {
 
 /// Count words in files (whitespace-separated)
 /// Returns a vector of results: { path, status, words }
+#[tracing::instrument(skip_all)]
 pub fn count_words(paths: &[&str]) -> Result<Vec<WordCountResult>> {
     let mut results = Vec::new();
     for path in paths {

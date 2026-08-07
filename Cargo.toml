@@ -18,9 +18,25 @@ shellexpand = "3.1"
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["full"] }
 tempfile = "3.0"
+# Already in the dependency tree through mcp-core; named directly because
+# this server logs its own diagnostics (path_guard) and records its own
+# metric (fileio.guard.rejections). Adds no crate.
+tracing = "0.1.44"
 
 [dev-dependencies]
 tempfile = "3.0"
+# A capturing Layer for the span-field test: it has to read back span fields
+# as the subscriber recorded them, independent of whether a console event
+# ever rendered one. Already in the tree through adelie-telemetry, so this
+# adds no crate.
+tracing-subscriber = "0.3.23"
+
+[features]
+# OTLP export of traces, metrics and log records, off by default. A
+# passthrough to mcp-core, which passes it on to adelie-telemetry. With it
+# off, no opentelemetry crate is resolved and a default build pays nothing.
+# Configure with the standard OTEL_* environment variables; see README.md.
+otel = ["mcp-core/otel"]
 
 [lints.rust]
 warnings = "deny"

@@ -24,6 +24,7 @@ pub struct FileStat {
 
 /// Get file or directory statistics
 /// Can accept a single path or multiple paths, returns a vector of FileStat
+#[tracing::instrument(skip_all)]
 pub fn stat(paths: &[&str]) -> Result<Vec<FileStat>> {
     let mut results = Vec::new();
     let mut errors = Vec::new();

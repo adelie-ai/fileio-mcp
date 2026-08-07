@@ -17,6 +17,7 @@ pub struct DirEntry {
 }
 
 /// List directory contents
+#[tracing::instrument(skip_all)]
 pub fn list_directory(path: &str, recursive: bool, include_hidden: bool) -> Result<Vec<DirEntry>> {
     let expanded_path = shellexpand::full(path)
         .map_err(|e| {

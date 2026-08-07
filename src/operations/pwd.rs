@@ -6,6 +6,7 @@ use crate::error::{FileIoError, Result};
 use std::env;
 
 /// Get the current working directory (pwd equivalent)
+#[tracing::instrument(skip_all)]
 pub fn pwd() -> Result<String> {
     env::current_dir()
         .map_err(|e| {

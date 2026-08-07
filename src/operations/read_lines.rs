@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 /// Read lines from a file with optional windowing
+#[tracing::instrument(skip_all)]
 pub fn read_lines(
     path: &str,
     start_line: Option<u64>,

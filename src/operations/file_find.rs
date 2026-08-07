@@ -12,6 +12,7 @@ use std::path::Path;
 /// otherwise it is a substring match.  Glob matching uses `globset` (already a
 /// dependency) so that `**`, character classes, and brace alternation all work
 /// correctly — the old hand-rolled regex chain silently mishandled those cases.
+#[tracing::instrument(skip_all)]
 pub fn file_find(
     pattern: &str,
     root: Option<&str>,

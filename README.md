@@ -77,6 +77,39 @@ The exact transport and runtime flags depend on how you embed or deploy the serv
 
 The crate can be included as a dependency to call operations directly from Rust code. The library surface is in `src/lib.rs` and the operations are available as modules under `src/operations` for programmatic use.
 
+## Logging
+
+Telemetry comes from `mcp-core`, which installs the subscriber and owns the request and tool-call spans. See the [mcp-core README](https://github.com/adelie-ai/mcp-core#logging) for the full picture: the console layer, the `mcp.*` metrics recorded on every call, and the complete `OTEL_*` variable reference. This server adds a nested span per operation (`read_lines`, `write_file`, `cp`, and so on, one per function under `src/operations`) and the two things documented below.
+
+Every operation span uses `#[tracing::instrument(skip_all)]`: it carries no fields at all, only a name and a duration. `skip_all` is required, not cosmetic - a plain `#[tracing::instrument]` captures every argument into the span at creation time, and a span field reaches an OTLP export on close whether or not any event ever prints it to the console. Adding an argument-bearing field to one of these spans is the kind of change that needs the level contract read again first.
+
+**Where it goes.** stderr, always, at every `RUST_LOG` level. The stdio transport frames JSON-RPC on stdout, so a log line there would corrupt the protocol stream.
+
+```sh
+RUST_LOG=debug fileio-mcp serve
+RUST_LOG=info,fileio_mcp=debug fileio-mcp serve
+```
+
+**The level contract.** INFO carries ids, counts, durations and tool names, never content. DEBUG carries tool arguments, including every path this server touches. A denied path is no exception: this server's whole design keeps a rejection invisible to the model (see the `path_guard` module doc), so a denial is exactly where a path would most tempt a future change to log it. Never do that above DEBUG.
+
+**This server's own metric.** `fileio.guard.rejections`, labelled by `reason` (`file` or `directory`, never the entry or the path that matched it). mcp-core's own `mcp.tools.call` counter cannot see a guard denial: the service returns a synthetic success or a plain "not found", so the call looks ordinary from the dispatch layer's side. This counter is the one place a rejection becomes observable, without telling the caller it happened.
+
+**Exporting to a collector.** Off by default.
+
+```toml
+[features]
+otel = ["mcp-core/otel"]
+```
+
+```sh
+cargo build --features otel
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4318 \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+  ./target/debug/fileio-mcp serve
+```
+
+With the feature off, `cargo tree` resolves no `opentelemetry*` crate and a default build pays nothing for it. With no collector configured, the process still writes a periodic metrics summary to stderr.
+
 ## Extending operations
 
 To add an operation:
