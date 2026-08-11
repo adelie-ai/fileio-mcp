@@ -1377,6 +1377,13 @@ impl ToolRegistry {
             }
             "fileio_get_current_directory" => {
                 let cwd = crate::operations::pwd::pwd()?;
+                // A returned path is a result like any other. With the
+                // working directory outside every root there is no reachable
+                // working directory to report, and every relative path the
+                // caller could build from it is refused anyway.
+                if self.guard.refuses(&cwd) {
+                    return Self::not_found_error(&cwd);
+                }
 
                 Ok(serde_json::json!({
                     "content": [{

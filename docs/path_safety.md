@@ -102,7 +102,10 @@ that user, and can read the target file directly.
 Every refusal, on an argument or on a result, looks like an absent file:
 
 - a refused argument returns `File not found: <path>`;
-- a refused result entry is dropped from the listing, with no gap and no marker.
+- a refused result entry is dropped from the listing, with no gap and no marker;
+- a tool whose whole result is one path, such as
+  `fileio_get_current_directory`, returns `File not found` when that path is
+  outside the set.
 
 The server never answers "permission denied", and never names the allowlist. A
 caller cannot tell a refusal from an empty directory.

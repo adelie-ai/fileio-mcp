@@ -490,6 +490,23 @@ async fn blocked_subtree_inside_an_allowed_root_is_omitted_from_listings() {
     assert_result_stays_inside(&body_text(&grepped), "fileio_find_in_files");
 }
 
+/// `fileio_get_current_directory` returns a path, so the allowlist applies to
+/// it like any other result. With the working directory outside every root,
+/// there is no reachable working directory to report, and every relative path
+/// is refused anyway.
+#[tokio::test]
+async fn current_directory_outside_the_allowlist_reports_not_found() {
+    let root = TempDir::new().expect("allowed root");
+    let registry = registry_rooted_at(root.path());
+
+    // The test process runs in the crate directory, which is not the root.
+    let result = registry
+        .execute_tool("fileio_get_current_directory", &json!({}))
+        .await;
+
+    assert_reported_not_found(result, "the working directory outside every root");
+}
+
 // ---------------------------------------------------------------------
 // The guard's own decision
 // ---------------------------------------------------------------------

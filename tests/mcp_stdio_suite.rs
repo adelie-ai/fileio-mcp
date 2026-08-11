@@ -1774,16 +1774,20 @@ fn fileio_get_canonical_path_missing_errors() {
 
 #[test]
 fn fileio_get_current_directory() {
-    run_case("fileio_get_current_directory", |client, _root| {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let res = client
-            .tool_call("fileio_get_current_directory", json!({}))
-            .unwrap();
-        assert_eq!(
-            extract_value(&res),
-            Value::String(repo_root.to_string_lossy().to_string())
-        );
-    });
+    // The working directory is a result like any other, so it has to be
+    // inside the allowlist before the server will report it.
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let working = repo_root.to_string_lossy().into_owned();
+    let mut client = McpStdioClient::start_with(&["--allow-path", &working], &[]);
+    client.initialize();
+
+    let res = client
+        .tool_call("fileio_get_current_directory", json!({}))
+        .unwrap();
+    assert_eq!(
+        extract_value(&res),
+        Value::String(repo_root.to_string_lossy().to_string())
+    );
 }
 
 #[test]
