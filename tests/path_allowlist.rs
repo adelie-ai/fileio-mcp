@@ -482,6 +482,40 @@ fn sibling_directory_sharing_a_root_name_prefix_is_refused() {
     );
 }
 
+/// Every operation expands `$VAR` with `shellexpand::full` before it touches
+/// the filesystem. The guard has to expand the same way, or a caller names one
+/// path to the guard and a different one to the operation.
+#[test]
+fn environment_variable_in_a_path_is_expanded_before_the_check() {
+    let Some(home) = std::env::var_os("HOME") else {
+        eprintln!("SKIP environment_variable_in_a_path_is_expanded_before_the_check: no HOME");
+        return;
+    };
+    let home = std::path::PathBuf::from(home);
+    let working = std::env::current_dir().expect("a working directory");
+    if home.starts_with(&working) {
+        eprintln!(
+            "SKIP environment_variable_in_a_path_is_expanded_before_the_check: \
+             HOME is inside the working directory"
+        );
+        return;
+    }
+
+    // "$HOME/..." has no leading separator, so a guard that leaves it alone
+    // resolves it under the working directory, which is the only root here.
+    let guard = PathGuard::with_roots(&[working.to_string_lossy().into_owned()]);
+
+    assert!(
+        guard.refuses("$HOME/.ssh/id_ed25519"),
+        "a path that starts with an environment variable must be expanded \
+         before the check, not treated as a relative name"
+    );
+    assert!(
+        guard.refuses("${HOME}/.ssh/id_ed25519"),
+        "the braced form must be expanded too"
+    );
+}
+
 #[test]
 fn empty_allowlist_refuses_every_path() {
     let root = TempDir::new().expect("a directory that is not allowed");

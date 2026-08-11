@@ -303,7 +303,18 @@ fn collect_blocks(block_paths: &[String], block_file: Option<&str>) -> Vec<Block
         // The block file itself is blocked, so its contents stay unreadable.
         add_block(&mut entries, file_path);
 
-        match std::fs::read_to_string(shellexpand::tilde(file_path).as_ref()) {
+        // Read the resolved path, so the file the guard blocks and the file it
+        // reads are the same one.
+        let Some(resolved) = resolve(file_path) else {
+            tracing::warn!(
+                outcome = "block_file_not_loaded",
+                "the configured block-file path could not be resolved; \
+                 continuing without its entries"
+            );
+            return entries;
+        };
+
+        match std::fs::read_to_string(&resolved) {
             Ok(contents) => {
                 for line in contents.lines() {
                     let line = line.trim();
@@ -336,6 +347,10 @@ fn add_block(entries: &mut Vec<BlockEntry>, pattern: &str) {
     }
     let is_directory = pattern.ends_with('/');
     let Some(resolved) = resolve(pattern) else {
+        tracing::warn!(
+            outcome = "block_entry_dropped",
+            "a block entry could not be resolved; dropping it"
+        );
         return;
     };
     entries.push(if is_directory {
@@ -368,6 +383,9 @@ fn queue_steps(queue: &mut VecDeque<Step>, path: &Path) {
 /// Resolve `path` to an absolute path with no symlink, `.` or `..` left in
 /// it, or `None` when the guard cannot say what the path is.
 ///
+/// A leading `~` and any `$VAR` expand first, the same way every operation
+/// expands them.
+///
 /// `std::fs::canonicalize` cannot do this job on its own, because a path the
 /// caller means to create does not exist yet. This walks the path one
 /// component at a time instead:
@@ -381,9 +399,17 @@ fn queue_steps(queue: &mut VecDeque<Step>, path: &Path) {
 ///   symlink, so nothing is missed.
 ///
 /// Anything else - an unreadable parent directory, a link loop, a working
-/// directory that cannot be read - returns `None`, and the caller refuses.
+/// directory that cannot be read, an expansion that fails - returns `None`,
+/// and the caller refuses.
 fn resolve(path: &str) -> Option<PathBuf> {
-    let expanded = shellexpand::tilde(path).into_owned();
+    // `shellexpand::full`, and not `tilde`, because that is what every
+    // function under `src/operations` calls before it touches the filesystem.
+    // Expanding less than the operations do would let a caller name one path
+    // to the guard and a different one to the operation: `$HOME/.ssh/id_rsa`
+    // reads as a relative name to `tilde` and as an absolute path to `full`.
+    // An expansion that fails names no path the guard can identify, so it
+    // refuses.
+    let expanded = shellexpand::full(path).ok()?.into_owned();
     let input = Path::new(&expanded);
 
     let mut resolved = if input.is_absolute() {
@@ -506,19 +532,23 @@ mod tests {
     }
 
     /// A `~` only expands at the front of a path. A `~` in the middle is an
-    /// ordinary directory name.
+    /// ordinary directory name. A `$VAR` expands wherever it appears, because
+    /// that is what the operations do.
     #[test]
-    fn resolve_expands_a_leading_tilde_only() {
+    fn resolve_expands_a_leading_tilde_and_environment_variables() {
         let Some(home) = std::env::var_os("HOME") else {
-            eprintln!("SKIP resolve_expands_a_leading_tilde_only: HOME is not set");
+            eprintln!("SKIP resolve_expands_a_leading_tilde_and_environment_variables: no HOME");
             return;
         };
         let home = PathBuf::from(home);
+        let expected_home = resolve(&home.join("does-not-exist-fileio-test").to_string_lossy());
 
-        assert_eq!(
-            resolve("~/does-not-exist-fileio-test"),
-            resolve(&home.join("does-not-exist-fileio-test").to_string_lossy())
-        );
+        assert_eq!(resolve("~/does-not-exist-fileio-test"), expected_home);
+        assert_eq!(resolve("$HOME/does-not-exist-fileio-test"), expected_home);
+        assert_eq!(resolve("${HOME}/does-not-exist-fileio-test"), expected_home);
+
+        // An undefined variable names no path the guard can identify.
+        assert_eq!(resolve("$FILEIO_MCP_UNDEFINED_TEST_VAR/x"), None);
 
         let root = TempDir::new().expect("a temporary root");
         let mid = root.path().join("~tilde").join("file.txt");

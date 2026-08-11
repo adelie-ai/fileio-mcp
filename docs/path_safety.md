@@ -57,7 +57,13 @@ Resolution walks the path one component at a time, starting at `/`:
   yet must still be checked, because a write creates it. A component that does
   not exist cannot be a symlink, so nothing is missed.
 
-A leading `~` expands first, from `HOME`.
+A leading `~` expands first, from `HOME`, and so does any `$VAR`. The guard
+expands exactly what the operations expand (`shellexpand::full`). Expanding less
+would let a caller name one path to the guard and a different one to the
+operation: `$HOME/.ssh/id_rsa` is a relative name to a guard that expands only
+`~`, and an absolute path to the operation that opens it. An expansion that
+fails, such as an undefined variable, names no path the guard can identify, so
+it refuses.
 
 The result is absolute, and free of symlinks, `.` and `..`. It is compared to
 each root by whole path components, so `/home/user/documents-private` is not
