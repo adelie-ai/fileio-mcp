@@ -585,6 +585,35 @@ fn environment_variable_in_a_path_is_expanded_before_the_check() {
     );
 }
 
+/// The default-value form needs no environment variable at all, so it does
+/// not depend on what the caller can set.
+#[test]
+fn default_value_expansion_in_a_path_is_expanded_before_the_check() {
+    let root = TempDir::new().expect("allowed root");
+    let guard = guard_rooted_at(root.path());
+
+    // "${UNSET:-..}" expands to "..", so this walks out of the root twice.
+    let payload = format!(
+        "{}/${{FILEIO_UNSET_TEST_VAR:-..}}/${{FILEIO_UNSET_TEST_VAR:-..}}/etc/passwd",
+        root.path().display()
+    );
+    assert!(
+        guard.refuses(&payload),
+        "a default-value expansion must be expanded before the check"
+    );
+
+    // The same shape that stays inside the root is still reachable, so the
+    // refusal above is about where it lands and not about the syntax.
+    let inside = format!(
+        "{}/${{FILEIO_UNSET_TEST_VAR:-sub}}/file.txt",
+        root.path().display()
+    );
+    assert!(
+        !guard.refuses(&inside),
+        "a default-value expansion that stays inside the root must be permitted"
+    );
+}
+
 #[test]
 fn empty_allowlist_refuses_every_path() {
     let root = TempDir::new().expect("a directory that is not allowed");
