@@ -83,8 +83,8 @@ symlink that points out of the root. The guard does not close this race.
 
 Closing it means opening each component with `openat` and `O_NOFOLLOW` from a
 directory handle held across the check, and acting on that handle instead of on
-the path. That is a rewrite of every operation under `src/operations`, and it is
-tracked as its own piece of work.
+the path. That is a rewrite of every operation under `src/operations`, tracked
+as issue #26.
 
 The exposure is small for the deployment this server targets. It runs as the
 local user and serves that user's own agent. An attacker who can create a
