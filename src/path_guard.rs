@@ -470,16 +470,7 @@ fn resolve_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
     if input.is_absolute() {
         return resolve_from(PathBuf::from("/"), input);
     }
-    // `resolve` follows the final component, so this is the directory of the
-    // link's target whenever `link_path` already exists as a link, rather
-    // than the directory the new link will sit in. It is the wrong base, and
-    // it is safe only because `symlink` refuses to replace an existing entry:
-    // when the base is wrong, no link is created. Anything that lets this
-    // server replace a link has to switch this to `link_directory`, the way
-    // `normalize_link_target` does.
-    let link = resolve(link_path)?;
-    let base = link.parent()?.to_path_buf();
-    resolve_from(base, input)
+    resolve_from(link_directory(link_path)?, input)
 }
 
 /// The directory a link at `link_path` sits in.

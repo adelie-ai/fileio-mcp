@@ -814,6 +814,41 @@ async fn read_symbolic_link_target_outside_the_allowlist_is_refused() {
     assert_reported_not_found(result, "a link whose immediate target is outside the root");
 }
 
+/// The target check reads the directory the link sits in, even when the link
+/// path already names an existing symlink.
+///
+/// `resolve` follows a final component that is a symlink, so reading the base
+/// from it gives the directory of that link's target instead. Here the two
+/// bases disagree about where `../ok.txt` lands: from `<root>` it is above the
+/// root, from `<root>/sub` it is inside it.
+///
+/// The safety difference is not observable today, because `symlink` refuses to
+/// replace an existing entry, so a wrongly approved target creates nothing.
+/// What is observable is which answer comes back: the guard's own refusal, or
+/// the operation's "already exists", which also says whether the link path is
+/// there.
+#[tokio::test]
+async fn symbolic_link_target_is_checked_from_the_link_directory_when_the_link_path_exists() {
+    let root = TempDir::new().expect("allowed root");
+    fs::create_dir_all(root.path().join("sub").join("deep"))
+        .expect("create the nested directories");
+    let link = root.path().join("L");
+    std::os::unix::fs::symlink("sub/deep", &link).expect("create the existing link");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_create_symbolic_link",
+            &json!({"target": "../ok.txt", "link_path": link.to_string_lossy()}),
+        )
+        .await;
+
+    assert_reported_not_found(
+        result,
+        "a target that names a path above the root, read from the link's own directory",
+    );
+}
+
 /// The relative half of the same rule, which the absolute case above cannot
 /// reach: the absolute branch never resolves the link path, so it cannot pick
 /// the wrong base directory.
