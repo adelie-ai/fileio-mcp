@@ -261,6 +261,54 @@ async fn copy_of_a_glob_matching_only_permitted_entries_succeeds() {
     assert!(destination.join("two.txt").exists());
 }
 
+/// A relative symlink target resolves against the link's own directory once
+/// the link exists. Checking it against the process working directory decides
+/// a different path from the one the link will point at.
+#[tokio::test]
+async fn relative_symlink_target_is_checked_against_the_link_directory() {
+    let root = TempDir::new().expect("allowed root");
+    let nested = root.path().join("sub");
+    fs::create_dir_all(&nested).expect("create the nested directory");
+    fs::write(root.path().join("inside.txt"), "reachable").expect("write the inside file");
+
+    let registry = registry_rooted_at(root.path());
+
+    // "../inside.txt" from <root>/sub is <root>/inside.txt, inside the root.
+    // Resolved against the working directory instead, it lands outside the
+    // root and the call would be refused.
+    registry
+        .execute_tool(
+            "fileio_create_symbolic_link",
+            &json!({
+                "target": "../inside.txt",
+                "link_path": nested.join("ok-link").to_string_lossy(),
+            }),
+        )
+        .await
+        .expect("a relative target inside the root must be allowed");
+    assert!(
+        nested.join("ok-link").is_symlink(),
+        "the permitted link must actually be created"
+    );
+
+    // "../../escape.txt" from <root>/sub leaves the root.
+    let result = registry
+        .execute_tool(
+            "fileio_create_symbolic_link",
+            &json!({
+                "target": "../../escape.txt",
+                "link_path": nested.join("bad-link").to_string_lossy(),
+            }),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a relative symlink target that leaves the root");
+    assert!(
+        !nested.join("bad-link").exists() && !nested.join("bad-link").is_symlink(),
+        "a refused link must not be created"
+    );
+}
+
 #[tokio::test]
 async fn stat_refuses_the_call_when_one_path_is_outside_the_allowlist() {
     let root = TempDir::new().expect("allowed root");
@@ -339,7 +387,11 @@ fn assert_result_stays_inside(text: &str, tool: &str) {
     );
     assert!(
         !text.contains("escape-link"),
-        "{tool} must omit a symlink that leaves the root, got: {text}"
+        "{tool} must omit a file symlink that leaves the root, got: {text}"
+    );
+    assert!(
+        !text.contains("escape-dir"),
+        "{tool} must omit a directory symlink that leaves the root, got: {text}"
     );
     assert!(
         !text.contains("outside-secret"),

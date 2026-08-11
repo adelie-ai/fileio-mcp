@@ -16,16 +16,34 @@ struct McpStdioClient {
 }
 
 impl McpStdioClient {
+    /// Start a server that may reach the system temporary directory and
+    /// nothing else. Every fixture in this suite lives under a `TempDir`, so
+    /// no test process can reach a home directory whatever the code does.
     fn start() -> Self {
+        let temp = std::env::temp_dir().to_string_lossy().into_owned();
+        Self::start_with(&[], &[("FILEIO_MCP_ALLOW_PATHS", temp.as_str())])
+    }
+
+    /// Start the server with extra `serve` arguments and extra environment
+    /// variables, so a test can pin the path allowlist the way an operator
+    /// would.
+    fn start_with(extra_args: &[&str], env: &[(&str, &str)]) -> Self {
         let exe = env!("CARGO_BIN_EXE_fileio-mcp");
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        let mut child = Command::new(exe)
+        let mut command = Command::new(exe);
+        command
             .args(["serve", "--mode", "stdio"])
+            .args(extra_args)
             .current_dir(repo_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        for (key, value) in env {
+            command.env(key, value);
+        }
+
+        let mut child = command
             .spawn()
             .expect("spawn fileio-mcp serve --mode stdio");
 
@@ -1686,14 +1704,34 @@ fn fileio_get_dirname() {
     });
 }
 
+/// A relative path resolves against the server's working directory, so this
+/// case needs that directory inside the allowlist. The client the rest of
+/// the suite uses allows the temporary directory only.
 #[test]
 fn fileio_get_dirname_no_dir_component() {
-    run_case("fileio_get_dirname_no_dir_component", |client, _root| {
-        let res = client
-            .tool_call("fileio_get_dirname", json!({"path": "file.txt"}))
-            .unwrap();
-        assert_eq!(extract_value(&res), Value::String("".to_string()));
-    });
+    let working = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .to_string_lossy()
+        .into_owned();
+    let mut client = McpStdioClient::start_with(&["--allow-path", &working], &[]);
+    client.initialize();
+
+    let res = client
+        .tool_call("fileio_get_dirname", json!({"path": "file.txt"}))
+        .unwrap();
+    assert_eq!(extract_value(&res), Value::String("".to_string()));
+}
+
+/// The other half of the same rule: with the working directory outside every
+/// root, a relative path names nothing the server may reach.
+#[test]
+fn relative_path_is_refused_when_the_working_directory_is_outside_the_allowlist() {
+    let root = TempDir::new().expect("create the allowed root");
+    let root_arg = root.path().to_string_lossy().into_owned();
+    let mut client = McpStdioClient::start_with(&["--allow-path", &root_arg], &[]);
+    client.initialize();
+
+    let res = client.tool_call("fileio_get_dirname", json!({"path": "file.txt"}));
+    expect_err_contains(res, "not found");
 }
 
 #[test]
@@ -1997,4 +2035,59 @@ fn fileio_change_ownership_noop_without_user_group() {
             assert!(p.exists());
         },
     );
+}
+
+// -----------------
+// The path allowlist, as an operator sets it
+// -----------------
+
+/// Drive a server whose allowlist is pinned to `root`, and check that a file
+/// inside `root` is readable while a file outside every root reports "not
+/// found". Both wiring paths - the flag and the environment variable - have
+/// to reach `PathGuard`, and only a real process proves either of them.
+fn assert_allowlist_bounds_the_server(client: &mut McpStdioClient, root: &Path, outside: &Path) {
+    client.initialize();
+
+    let inside = root.join("inside.txt");
+    fs::write(&inside, "reachable\n").expect("write the file inside the root");
+    let secret = outside.join("outside-secret.txt");
+    fs::write(&secret, "unreachable\n").expect("write the file outside every root");
+
+    let res = client
+        .tool_call(
+            "fileio_read_lines",
+            json!({"path": inside.to_string_lossy()}),
+        )
+        .expect("a file inside the allowlist must be readable");
+    assert!(
+        extract_value(&res).to_string().contains("reachable"),
+        "expected the inside file's contents, got: {res}"
+    );
+
+    let refused = client.tool_call(
+        "fileio_read_lines",
+        json!({"path": secret.to_string_lossy()}),
+    );
+    expect_err_contains(refused, "not found");
+}
+
+#[test]
+fn allow_path_flag_bounds_the_server_to_the_named_root() {
+    let root = TempDir::new().expect("create the allowed root");
+    let outside = TempDir::new().expect("create a directory outside every root");
+    let root_arg = root.path().to_string_lossy().into_owned();
+
+    let mut client = McpStdioClient::start_with(&["--allow-path", &root_arg], &[]);
+    assert_allowlist_bounds_the_server(&mut client, root.path(), outside.path());
+}
+
+#[test]
+fn allow_paths_environment_variable_bounds_the_server_to_the_named_root() {
+    let root = TempDir::new().expect("create the allowed root");
+    let outside = TempDir::new().expect("create a directory outside every root");
+    let root_env = root.path().to_string_lossy().into_owned();
+
+    let mut client =
+        McpStdioClient::start_with(&[], &[("FILEIO_MCP_ALLOW_PATHS", root_env.as_str())]);
+    assert_allowlist_bounds_the_server(&mut client, root.path(), outside.path());
 }

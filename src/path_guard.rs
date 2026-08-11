@@ -24,8 +24,10 @@ use mcp_core::telemetry::metrics::{self, Label};
 
 /// Environment variable naming the allowlist roots, separated by `:`.
 ///
-/// Set it to point a run at a directory made to be thrown away. A test that
-/// sets it cannot reach a real home directory, whatever the code does.
+/// Point a run at a directory made to be thrown away, and the process cannot
+/// reach anything outside it, whatever the code does. The test suites that
+/// start the real binary set it; the ones that build the guard directly pin
+/// their roots with [`PathGuard::with_roots`] instead.
 pub const ALLOW_PATHS_ENV: &str = "FILEIO_MCP_ALLOW_PATHS";
 
 /// Directories under `HOME` in the built-in default allowlist. A starting
@@ -174,7 +176,25 @@ impl PathGuard {
     /// arguments and on results alike, so it is the one place that records
     /// the refusal rather than each of the call sites across `tools.rs`.
     pub fn refuses(&self, path: &str) -> bool {
-        let Some(resolved) = resolve(path) else {
+        self.refuses_resolved(resolve(path))
+    }
+
+    /// Whether the guard refuses `target` used as the target of a symbolic
+    /// link created at `link_path`.
+    ///
+    /// A relative target resolves against the link's own directory, because
+    /// that is the base the kernel resolves it from. Checking it against the
+    /// process working directory decides a different path from the one the
+    /// link will point at, and the server would create a link that leaves the
+    /// allowlist. An absolute target is checked as it stands.
+    pub fn refuses_link_target(&self, link_path: &str, target: &str) -> bool {
+        self.refuses_resolved(resolve_link_target(link_path, target))
+    }
+
+    /// The decision, once a path has been resolved. `None` means the guard
+    /// could not work out what the path is, so it refuses.
+    fn refuses_resolved(&self, resolved: Option<PathBuf>) -> bool {
+        let Some(resolved) = resolved else {
             record_refusal(RefusalReason::Unresolvable);
             return true;
         };
@@ -412,12 +432,33 @@ fn resolve(path: &str) -> Option<PathBuf> {
     let expanded = shellexpand::full(path).ok()?.into_owned();
     let input = Path::new(&expanded);
 
-    let mut resolved = if input.is_absolute() {
+    let start = if input.is_absolute() {
         PathBuf::from("/")
     } else {
         std::fs::canonicalize(std::env::current_dir().ok()?).ok()?
     };
+    resolve_from(start, input)
+}
 
+/// Resolve the target of a symbolic link that will be created at
+/// `link_path`.
+///
+/// A relative target is resolved from the link's own directory, which is
+/// where the kernel resolves it from, and not from the process working
+/// directory.
+fn resolve_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
+    let expanded = shellexpand::full(target).ok()?.into_owned();
+    let input = Path::new(&expanded);
+    if input.is_absolute() {
+        return resolve_from(PathBuf::from("/"), input);
+    }
+    let link = resolve(link_path)?;
+    let base = link.parent()?.to_path_buf();
+    resolve_from(base, input)
+}
+
+/// Walk `input` from an already-resolved `resolved` base.
+fn resolve_from(mut resolved: PathBuf, input: &Path) -> Option<PathBuf> {
     let mut pending: VecDeque<Step> = VecDeque::new();
     queue_steps(&mut pending, input);
 

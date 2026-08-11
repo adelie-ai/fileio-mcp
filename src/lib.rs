@@ -35,7 +35,10 @@ fileio_find_files to locate files by name or glob, plus fileio_list_directory \
 and fileio_stat to explore and inspect entries. Prefer absolute paths, since \
 relative paths resolve from the server's working directory, and note that \
 write, move, and remove operations act on the real filesystem and take effect \
-immediately.";
+immediately. This server reaches only the directories it is configured to \
+reach; any other path reports 'not found', and a call that passes several \
+paths at once reports 'not found' for all of them when one is out of bounds, \
+so retry with the paths that worked.";
 
 /// Build the [`ServerConfig`] that describes this server to MCP clients.
 ///

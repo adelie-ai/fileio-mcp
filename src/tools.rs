@@ -1216,7 +1216,12 @@ impl ToolRegistry {
                                 "Missing required parameter: link_path".to_string(),
                             )
                         })?;
-                if self.guard.refuses(target) {
+                // A relative target resolves against the link's own directory
+                // once the link exists, so that is the base it is checked
+                // against. `hard_link` is different: the kernel resolves its
+                // target against the working directory, which is what
+                // `refuses` already uses.
+                if self.guard.refuses_link_target(link_path, target) {
                     return Self::not_found_error(target);
                 }
                 if self.guard.refuses(link_path) {
@@ -1678,11 +1683,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Array-path tools must answer once per input path, in the order the
-    /// caller gave them. A short array means the caller cannot line results
-    /// up with the paths it asked about.
+    /// `count_lines`, `count_words` and `stat` must answer once per input
+    /// path, in the order the caller gave them. A short array means the caller
+    /// cannot line results up with the paths it asked about.
+    ///
+    /// `fileio_get_permissions` is the fourth array-path tool and is left out
+    /// on purpose: `get_file_mode` fails the whole call when one path cannot
+    /// be read, so it does not hold this property and never has.
     #[tokio::test]
-    async fn array_path_tools_return_one_result_per_input_path() {
+    async fn count_and_stat_tools_return_one_result_per_input_path() {
         let dir = std::env::temp_dir().join("fileio_array_cardinality_test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

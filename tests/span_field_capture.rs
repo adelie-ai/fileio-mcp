@@ -134,7 +134,10 @@ fn no_span_or_info_level_event_field_carries_a_path() {
     let calls = sentinel_tool_calls(root.path());
     assert_table_covers_every_tool(&calls);
 
-    let service = FileIoService::with_guard(PathGuard::default());
+    // The guard's only root is this test's own temporary directory, so the
+    // in-process service cannot reach anything the fixture did not create.
+    let roots = [root.path().to_string_lossy().into_owned()];
+    let service = FileIoService::with_guard(PathGuard::with_roots(&roots));
     let core = ServerCore::new(fileio_mcp::server_config(), Arc::new(service));
 
     // Build the JSON-RPC requests up front so the closure below can own
