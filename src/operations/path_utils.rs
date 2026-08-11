@@ -134,6 +134,22 @@ pub fn readlink(path: &str) -> Result<String> {
     })
 }
 
+/// Expand `~` and `$VAR` in `path`, the way every operation does before it
+/// touches the filesystem.
+///
+/// The path guard expands the same way when it decides, so an operation that
+/// skips this acts on a different path from the one that was approved.
+pub fn expand_path(path: &str) -> Result<String> {
+    shellexpand::full(path)
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(FileIoError::InvalidPath(format!(
+                "Failed to expand path '{}': {}",
+                path, e
+            )))
+        })
+        .map(|expanded| expanded.into_owned())
+}
+
 /// Whether `s` carries glob metacharacters.
 ///
 /// Shared by `cp`, `mv` and `rm`, which all accept a glob in place of a

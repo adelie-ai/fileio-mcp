@@ -2095,3 +2095,63 @@ fn allow_paths_environment_variable_bounds_the_server_to_the_named_root() {
         McpStdioClient::start_with(&[], &[("FILEIO_MCP_ALLOW_PATHS", root_env.as_str())]);
     assert_allowlist_bounds_the_server(&mut client, root.path(), outside.path());
 }
+
+/// The guard checks the expanded path, so the operation has to act on the
+/// expanded path. A `$VAR` needs a real environment, so this drives the real
+/// binary with the variable set rather than mutating the test process.
+#[test]
+fn remove_acts_on_the_expanded_path_the_guard_checked() {
+    let root = TempDir::new().expect("create the allowed root");
+    let target = root.path().join("report.txt");
+    fs::write(&target, "work").expect("write the file");
+    let root_arg = root.path().to_string_lossy().into_owned();
+
+    let mut client = McpStdioClient::start_with(
+        &["--allow-path", &root_arg],
+        &[("FILEIO_TEST_ROOT", root_arg.as_str())],
+    );
+    client.initialize();
+
+    client
+        .tool_call(
+            "fileio_remove",
+            json!({"path": ["$FILEIO_TEST_ROOT/report.txt"], "force": true}),
+        )
+        .expect("the path is inside the root, so the call must be accepted");
+
+    assert!(
+        !target.exists(),
+        "remove reported success, so the file must actually be gone"
+    );
+}
+
+/// Same rule for a copy source, which is collected without expansion.
+#[test]
+fn copy_acts_on_the_expanded_source_the_guard_checked() {
+    let root = TempDir::new().expect("create the allowed root");
+    let source = root.path().join("source.txt");
+    fs::write(&source, "contents").expect("write the source file");
+    let destination = root.path().join("copy.txt");
+    let root_arg = root.path().to_string_lossy().into_owned();
+
+    let mut client = McpStdioClient::start_with(
+        &["--allow-path", &root_arg],
+        &[("FILEIO_TEST_ROOT", root_arg.as_str())],
+    );
+    client.initialize();
+
+    client
+        .tool_call(
+            "fileio_copy",
+            json!({
+                "source": ["$FILEIO_TEST_ROOT/source.txt"],
+                "destination": destination.to_string_lossy(),
+            }),
+        )
+        .expect("the source is inside the root, so the call must be accepted");
+
+    assert_eq!(
+        fs::read_to_string(&destination).expect("the copy must exist"),
+        "contents"
+    );
+}

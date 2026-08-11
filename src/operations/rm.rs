@@ -3,7 +3,7 @@
 // Remove files or directories
 
 use crate::error::{FileIoError, Result};
-use crate::operations::path_utils::{expand_glob, is_glob_pattern};
+use crate::operations::path_utils::{expand_glob, expand_path, is_glob_pattern};
 use std::fs;
 use std::path::Path;
 
@@ -30,8 +30,9 @@ pub fn rm(paths: &[&str], recursive: bool, force: bool) -> Result<Vec<super::mv:
                 }
             }
         } else {
-            // Single path
-            all_paths.push(path.to_string());
+            // Expand the same way `expand_glob` expands a pattern, so the
+            // path acted on is the path the guard approved.
+            all_paths.push(expand_path(path)?);
         }
     }
 

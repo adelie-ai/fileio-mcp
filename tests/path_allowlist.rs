@@ -707,3 +707,127 @@ async fn paths_inside_the_allowlist_are_reachable() {
         .expect("a listing inside the root must succeed");
     assert!(body_text(&listed).contains("notes.txt"));
 }
+
+// ---------------------------------------------------------------------
+// Where an operation acts is not always where the argument points
+// ---------------------------------------------------------------------
+
+/// `mktemp` creates in the template's parent directory. A template with no
+/// separator has an empty parent, which is the process working directory,
+/// not the system temporary directory.
+#[tokio::test]
+async fn create_temporary_with_a_bare_template_is_refused_when_the_working_directory_is_outside() {
+    let temp_root = std::env::temp_dir();
+    let working = std::env::current_dir().expect("a working directory");
+    if working.starts_with(&temp_root) {
+        eprintln!("SKIP bare-template test: the working directory is inside the temp root");
+        return;
+    }
+
+    // The system temporary directory is allowed; the working directory is not.
+    let registry = registry_rooted_at(&temp_root);
+    let before = entries_of(&working);
+
+    let result = registry
+        .execute_tool(
+            "fileio_create_temporary",
+            &json!({"type": "file", "template": "probe-XXXXXX"}),
+        )
+        .await;
+
+    // Remove anything the call left behind before asserting, so a failure
+    // does not litter the directory the test ran in.
+    for path in entries_of(&working) {
+        if !before.contains(&path) {
+            let _ = fs::remove_file(&path);
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+
+    assert_reported_not_found(
+        result,
+        "a bare mktemp template with the working directory outside",
+    );
+}
+
+fn entries_of(dir: &Path) -> Vec<std::path::PathBuf> {
+    fs::read_dir(dir)
+        .expect("read the directory")
+        .map(|entry| entry.expect("a directory entry").path())
+        .collect()
+}
+
+/// `readlink` returns the link's immediate target. The argument check
+/// resolves the whole chain, so a link whose final target is inside a root
+/// can still name an immediate target outside one.
+#[tokio::test]
+async fn read_symbolic_link_target_outside_the_allowlist_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+
+    fs::write(root.path().join("readme.md"), "inside").expect("write the inside file");
+    // An ordinary convenience symlink outside the root, pointing back into it.
+    std::os::unix::fs::symlink(root.path(), outside.path().join("back"))
+        .expect("create the outside symlink");
+    // The chain ends inside the root, so the argument check permits it.
+    let link = root.path().join("hop");
+    std::os::unix::fs::symlink(outside.path().join("back").join("readme.md"), &link)
+        .expect("create the hopping symlink");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_read_symbolic_link",
+            &json!({"path": link.to_string_lossy()}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a link whose immediate target is outside the root");
+}
+
+/// `dirname` of an allowlist root is the root's parent, which is outside the
+/// set. A result is checked like any other path.
+#[tokio::test]
+async fn dirname_of_an_allowlist_root_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let registry = registry_rooted_at(root.path());
+
+    let result = registry
+        .execute_tool(
+            "fileio_get_dirname",
+            &json!({"path": root.path().to_string_lossy()}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "the parent of an allowlist root");
+}
+
+/// A symbolic link has to point at the path the guard approved, not at the
+/// text the caller typed.
+#[tokio::test]
+async fn symbolic_link_points_at_the_expanded_target_the_guard_checked() {
+    let root = TempDir::new().expect("allowed root");
+    let target = root.path().join("real.txt");
+    fs::write(&target, "contents").expect("write the target file");
+    let link = root.path().join("link");
+
+    let unexpanded = format!(
+        "${{FILEIO_UNSET_TEST_VAR:-{}}}/real.txt",
+        root.path().display()
+    );
+
+    let registry = registry_rooted_at(root.path());
+    registry
+        .execute_tool(
+            "fileio_create_symbolic_link",
+            &json!({"target": unexpanded, "link_path": link.to_string_lossy()}),
+        )
+        .await
+        .expect("a target inside the root must be allowed");
+
+    assert_eq!(
+        fs::read_link(&link).expect("read the link back"),
+        target,
+        "the link must point at the expanded target, not at the text typed"
+    );
+}

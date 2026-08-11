@@ -191,6 +191,19 @@ impl PathGuard {
         self.refuses_resolved(resolve_link_target(link_path, target))
     }
 
+    /// Whether the guard refuses to disclose `target`, the text a symbolic
+    /// link at `link_path` holds.
+    ///
+    /// This asks a different question from [`PathGuard::refuses`], which
+    /// decides access and follows symlinks to do it. Disclosure is about the
+    /// text: a target reading `/elsewhere/back/x` names `/elsewhere` whatever
+    /// it resolves to, and a link whose chain ends inside a root can still
+    /// name a directory outside one. So this normalizes `.` and `..` and
+    /// follows nothing.
+    pub fn refuses_to_disclose_link_target(&self, link_path: &str, target: &str) -> bool {
+        self.refuses_resolved(normalize_link_target(link_path, target))
+    }
+
     /// The decision, once a path has been resolved. `None` means the guard
     /// could not work out what the path is, so it refuses.
     fn refuses_resolved(&self, resolved: Option<PathBuf>) -> bool {
@@ -455,6 +468,32 @@ fn resolve_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
     let link = resolve(link_path)?;
     let base = link.parent()?.to_path_buf();
     resolve_from(base, input)
+}
+
+/// Make a link target absolute and drop `.` and `..`, following no symlink.
+///
+/// A relative target is read from the directory the link sits in, which is
+/// the base the kernel would use.
+fn normalize_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
+    let expanded = shellexpand::full(target).ok()?.into_owned();
+    let input = Path::new(&expanded);
+
+    let mut normalized = if input.is_absolute() {
+        PathBuf::from("/")
+    } else {
+        resolve(link_path)?.parent()?.to_path_buf()
+    };
+
+    for component in input.components() {
+        match component {
+            Component::Normal(name) => normalized.push(name),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    Some(normalized)
 }
 
 /// Walk `input` from an already-resolved `resolved` base.

@@ -20,6 +20,8 @@ subtree the operator subtracted, is enough to do it.
 The first source that gives a non-empty set wins:
 
 1. `--allow-path <path>` on the command line. Repeat the flag for more roots.
+   Give an absolute path. A relative one resolves against the directory the
+   server was started in, so the allowlist would change with the launch site.
 2. `FILEIO_MCP_ALLOW_PATHS`, a `:`-separated list of roots. A root whose own
    name contains `:` cannot be named this way; use `--allow-path` for it.
 3. The built-in default set.
@@ -126,6 +128,39 @@ Several tools take an array of paths. When the guard refuses one of them, the
 whole call is refused and the message names that path. Running the operation on
 the rest gives a partial answer that the caller cannot tell from a complete one.
 Split the call instead.
+
+## What resolution cannot see
+
+Resolution follows symbolic links, `.` and `..`. It cannot see a hard link,
+because a hard link has no target: it is a second name for the same file. A
+hard link inside a root, made earlier and pointing at a file outside every
+root, resolves to a path inside the root and reads clean. No path-based guard
+can tell the difference, and this one does not try.
+
+`SECURITY_AUDIT.md` records that neither end of a link this server creates may
+leave an allowed root. That covers links this server makes, not links it finds.
+
+## Where the operation acts is not always where the argument points
+
+The guard decides about a path, and the operation then acts. The two must agree
+about which path that is:
+
+- Expansion. The guard expands with `shellexpand::full`, and so does every
+  operation, including the ones that collect a copy, move or remove source.
+- A symbolic link points at the expanded target, not at the text the caller
+  typed, so the link the server makes is the one the guard approved.
+- `mktemp` creates in the template's parent directory. A template with no
+  separator has an empty parent, which is the working directory and not the
+  temporary directory, so that is what gets checked.
+
+## Disclosure is a separate question from access
+
+`fileio_read_symbolic_link` returns the text a link holds. Access and
+disclosure ask different questions of it. Access follows the whole chain, so a
+link whose chain ends inside a root is reachable. Disclosure is about the text:
+a target reading `/elsewhere/back/notes.md` names `/elsewhere`, whatever it
+resolves to. The returned text is normalized without following anything, and
+refused when it names a path outside the set.
 
 ## A glob is checked by what it matches
 

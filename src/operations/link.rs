@@ -97,6 +97,11 @@ pub fn symlink(target: &str, link_path: &str) -> Result<()> {
         })?;
     }
 
+    // Point the link at the expanded target, which is what the guard checked.
+    // Storing the text the caller typed would leave a link pointing somewhere
+    // else, outside the allowlist.
+    let target = &crate::operations::path_utils::expand_path(target)?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;

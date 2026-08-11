@@ -1267,6 +1267,11 @@ impl ToolRegistry {
                 }
 
                 let dirname = crate::operations::path_utils::dirname(path)?;
+                // The parent of an allowlist root is outside the set, so the
+                // result is checked like any other path this server returns.
+                if self.guard.refuses(&dirname) {
+                    return Self::not_found_error(&dirname);
+                }
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1305,6 +1310,13 @@ impl ToolRegistry {
                 }
 
                 let target = crate::operations::path_utils::readlink(path)?;
+                // The argument check resolves the whole chain, so it accepts a
+                // link whose final target is inside a root. `readlink` returns
+                // the immediate target, which can still name a path outside
+                // one. A relative target is read from the link's directory.
+                if self.guard.refuses_to_disclose_link_target(path, &target) {
+                    return Self::not_found_error(&target);
+                }
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1321,13 +1333,26 @@ impl ToolRegistry {
                 })?;
                 let template = args.get("template").and_then(|v| v.as_str());
 
-                // mktemp creates in the template's parent directory, or in
-                // $TMPDIR when the template names no directory. Check whichever
-                // one it will actually use, so a template like
-                // "/etc/security/probe-XXXXXX" cannot create a file there.
+                // mktemp expands the template, then creates in its parent
+                // directory. A template with no separator has an empty parent,
+                // which is the working directory and not $TMPDIR. Derive the
+                // creation site exactly the way mktemp does, so a template
+                // like "/etc/security/probe-XXXXXX" cannot create a file
+                // there and a bare "probe-XXXXXX" cannot escape through the
+                // working directory.
                 let creation_site = match template {
-                    Some(t) if t.contains('/') => t.to_string(),
-                    _ => std::env::temp_dir().to_string_lossy().into_owned(),
+                    Some(t) => {
+                        let expanded = crate::operations::path_utils::expand_path(t)?;
+                        let parent = std::path::Path::new(&expanded)
+                            .parent()
+                            .unwrap_or(std::path::Path::new("."));
+                        if parent.as_os_str().is_empty() {
+                            ".".to_string()
+                        } else {
+                            parent.to_string_lossy().into_owned()
+                        }
+                    }
+                    None => std::env::temp_dir().to_string_lossy().into_owned(),
                 };
                 if self.guard.refuses(&creation_site) {
                     return Self::not_found_error(&creation_site);

@@ -3,7 +3,7 @@
 // Copy files or directories
 
 use crate::error::{FileIoError, Result};
-use crate::operations::path_utils::{expand_glob, is_glob_pattern};
+use crate::operations::path_utils::{expand_glob, expand_path, is_glob_pattern};
 use std::fs;
 use std::path::Path;
 
@@ -55,8 +55,9 @@ pub fn cp(sources: &[&str], destination: &str, recursive: bool) -> Result<Vec<Op
                 all_sources.push(s.to_string());
             }
         } else {
-            // Single path
-            all_sources.push(source.to_string());
+            // Expand the same way `expand_glob` expands a pattern, so the
+            // path acted on is the path the guard approved.
+            all_sources.push(expand_path(source)?);
         }
     }
 
