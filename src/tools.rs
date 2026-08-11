@@ -24,65 +24,56 @@ impl ToolRegistry {
         Self { guard }
     }
 
-    /// "File not found" error result in MCP JSON format
+    /// "File not found" error result in MCP JSON format. This is how every
+    /// refusal reaches the caller: the guard never answers "permission
+    /// denied" and never names the allowlist, so a refusal reads as an
+    /// absent file.
     fn not_found_error(path: &str) -> Result<Value> {
-        Err(FileIoError::NotFound(format!("{} not found: {}", "File", path)).into())
+        Err(FileIoError::NotFound(path.to_string()).into())
     }
 
-    /// Silent success result in MCP JSON format (for denied writes whose real
-    /// counterpart also returns a plain-text body — `write_file`, `touch`,
-    /// `set_permissions`, `make_directory`, `change_ownership`, `link`).
-    /// Handlers whose real success path returns serialized JSON (`edit_file`,
-    /// `copy`, `move`, `remove`, `remove_directory`) must NOT use this — they
-    /// build a synthetic result of the matching JSON shape instead, see
-    /// `synthesize_op_results` and the per-handler synthesis blocks. Mixing
-    /// the two creates a response-shape oracle (issue #3).
-    fn silent_success(message: &str) -> Result<Value> {
-        Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": message
-            }]
-        }))
-    }
-
-    /// Build a `Vec<OpResult>`-shaped synthetic response (matching `cp`, `mv`,
-    /// `rm`, `rmdir`'s real success shape) covering every input path with
-    /// `status: "ok", exists: true`. Used when a denied call would otherwise
-    /// reveal denial via a different response shape (issue #3) or via a
-    /// short result vector (the partial-filter oracle: legacy code filtered
-    /// denied sources before running cp/mv, so output length differed from
-    /// input length).
-    fn synthesize_op_results(paths: &[String]) -> Vec<Value> {
+    /// The first of `paths` the guard refuses, if any.
+    ///
+    /// A tool that takes an array of paths refuses the whole call when one
+    /// path is out of bounds. Running the operation on the rest would give a
+    /// partial answer the caller cannot tell from a complete one.
+    fn first_refused<'a>(&self, paths: &'a [String]) -> Option<&'a str> {
         paths
             .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "path": p,
-                    "status": "ok",
-                    "exists": true,
-                })
-            })
-            .collect()
+            .map(String::as_str)
+            .find(|path| self.guard.refuses(path))
     }
 
-    /// Partition `paths` into (allowed, denied) while preserving order.
-    /// Returns (allowed_paths, denied_set) where denied_set is a
-    /// `HashSet` of the denied path strings for O(1) look-up.
-    fn partition_by_guard<'a>(
-        &self,
-        paths: &'a [String],
-    ) -> (Vec<&'a String>, std::collections::HashSet<&'a String>) {
-        let mut allowed = Vec::new();
-        let mut denied = std::collections::HashSet::new();
-        for p in paths {
-            if self.guard.is_denied(p) {
-                denied.insert(p);
-            } else {
-                allowed.push(p);
+    /// The first refused path among `sources`, checking what each glob
+    /// expands to as well as the pattern as written.
+    ///
+    /// `fileio_copy`, `fileio_move` and `fileio_remove` accept a glob in
+    /// place of a path. The pattern itself always stays inside the root that
+    /// contains it, so checking only the pattern says nothing about the
+    /// entries it matches: a symlink among them can point out of the root,
+    /// and the copy would follow it. A glob the guard cannot expand is
+    /// refused, because the guard cannot say where it points.
+    fn first_refused_source(&self, sources: &[String]) -> Option<String> {
+        for source in sources {
+            if self.guard.refuses(source) {
+                return Some(source.clone());
+            }
+            if !crate::operations::path_utils::is_glob_pattern(source) {
+                continue;
+            }
+            match crate::operations::path_utils::expand_glob(source) {
+                Ok(matched) => {
+                    for path in matched {
+                        let path = path.to_string_lossy().into_owned();
+                        if self.guard.refuses(&path) {
+                            return Some(path);
+                        }
+                    }
+                }
+                Err(_) => return Some(source.clone()),
             }
         }
-        (allowed, denied)
+        None
     }
 
     /// Get all tools in MCP format
@@ -754,7 +745,7 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
                 let start_line = Self::parse_optional_u64(args, "start_line")?;
@@ -784,8 +775,8 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
-                    return Self::silent_success("File written successfully");
+                if self.guard.refuses(path) {
+                    return Self::not_found_error(path);
                 }
                 let content = args
                     .get("content")
@@ -813,12 +804,8 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                if paths.is_empty() {
-                    return Self::silent_success("File mode set successfully");
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
                 }
                 let mode = args.get("mode").and_then(|v| v.as_str()).ok_or_else(|| {
                     crate::error::McpError::InvalidToolParameters(
@@ -843,18 +830,12 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                // Partial-denial oracle fix (issue #6): do NOT filter denied
-                // paths before calling the op. Instead, call the op only on
-                // allowed paths, then insert sentinel entries for denied paths
-                // so the output HashMap has the same key count as the input.
-                let (allowed, denied_set) = self.partition_by_guard(&paths);
-                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
-
-                let mut modes = crate::operations::get_mode::get_file_mode(&allowed_refs)?;
-                // Sentinel: denied paths look like any other path in the map.
-                for p in &denied_set {
-                    modes.insert(p.to_string(), "0000".to_string());
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
                 }
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+
+                let modes = crate::operations::get_mode::get_file_mode(&path_refs)?;
                 Ok(serde_json::json!({
                     "content": [{
                         "type": "text",
@@ -870,12 +851,8 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                if paths.is_empty() {
-                    return Self::silent_success("File(s) touched successfully");
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
                 }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
@@ -895,48 +872,14 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                // Partial-denial oracle fix (issue #6): run stat only on allowed
-                // paths; re-merge sentinel FileStat entries for denied paths in
-                // original input order so the output array length == input length.
-                let (allowed, denied_set) = self.partition_by_guard(&paths);
-                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
+                }
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let mut real_results: std::collections::HashMap<String, Value> =
-                    crate::operations::stat::stat(&allowed_refs)?
-                        .into_iter()
-                        .map(|s| {
-                            let p = s.path.clone();
-                            (p, s.into())
-                        })
-                        .collect();
-
-                // Build the result array in original input order.
-                let stat_json_array: Vec<Value> = paths
-                    .iter()
-                    .map(|p| {
-                        if denied_set.contains(p) {
-                            // Sentinel: looks like a regular file with exists:true
-                            // so callers cannot distinguish denial from a real entry.
-                            crate::operations::stat::FileStat {
-                                path: p.clone(),
-                                entry_type: "file".to_string(),
-                                size: 0,
-                                mode: Some("0000".to_string()),
-                                modified: None,
-                                accessed: None,
-                                created: None,
-                                is_file: true,
-                                is_dir: false,
-                                is_symlink: false,
-                                exists: true,
-                            }
-                            .into()
-                        } else {
-                            real_results
-                                .remove(p)
-                                .unwrap_or_else(|| serde_json::json!({"path": p, "exists": false}))
-                        }
-                    })
+                let stat_json_array: Vec<Value> = crate::operations::stat::stat(&path_refs)?
+                    .into_iter()
+                    .map(Into::into)
                     .collect();
 
                 Ok(serde_json::json!({
@@ -954,12 +897,8 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                if paths.is_empty() {
-                    return Self::silent_success("Directory(ies) created successfully");
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
                 }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(true);
@@ -979,15 +918,19 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
                 let recursive = Self::parse_optional_bool(args, "recursive")?.unwrap_or(false);
                 let include_hidden =
                     Self::parse_optional_bool(args, "include_hidden")?.unwrap_or(false);
 
-                let entries =
+                let mut entries =
                     crate::operations::list_dir::list_directory(path, recursive, include_hidden)?;
+                // The allowlist applies to the result, not only to the
+                // argument. A symlink inside the root, or a blocked subtree
+                // below it, would otherwise disclose a path the guard refuses.
+                entries.retain(|entry| !self.guard.refuses(&entry.path));
                 let entries_json: Vec<Value> = entries.into_iter().map(|e| e.into()).collect();
 
                 Ok(serde_json::json!({
@@ -1008,16 +951,20 @@ impl ToolRegistry {
                         )
                     })?;
                 let root = args.get("root").and_then(|v| v.as_str());
-                if let Some(root_path) = root
-                    && self.guard.is_denied(root_path)
-                {
-                    return Self::not_found_error(root_path);
+                // With no root the walker starts at the process working
+                // directory, which needs the same check as a named root.
+                let search_root = root.unwrap_or(".");
+                if self.guard.refuses(search_root) {
+                    return Self::not_found_error(search_root);
                 }
                 let max_depth = Self::parse_optional_u64(args, "max_depth")?.map(|v| v as usize);
                 let file_type = args.get("file_type").and_then(|v| v.as_str());
 
-                let matches =
+                let mut matches =
                     crate::operations::file_find::file_find(pattern, root, max_depth, file_type)?;
+                // The allowlist applies to the result: the walk reaches a
+                // symlink that leaves the root, and a blocked subtree below it.
+                matches.retain(|found| !self.guard.refuses(found));
                 let matches_json: Vec<Value> = matches.into_iter().map(|m| m.into()).collect();
 
                 Ok(serde_json::json!({
@@ -1042,7 +989,7 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
                 let case_sensitive =
@@ -1057,7 +1004,7 @@ impl ToolRegistry {
                 let whole_word = Self::parse_optional_bool(args, "whole_word")?.unwrap_or(false);
                 let multiline = Self::parse_optional_bool(args, "multiline")?.unwrap_or(false);
 
-                let matches = crate::operations::find_in_files::find_in_files(
+                let mut matches = crate::operations::find_in_files::find_in_files(
                     &crate::operations::find_in_files::FindInFilesParams {
                         pattern,
                         path,
@@ -1072,6 +1019,9 @@ impl ToolRegistry {
                         multiline,
                     },
                 )?;
+                // The allowlist applies to the result: the walk follows a
+                // symlink that leaves the root and reads what it points at.
+                matches.retain(|found| !self.guard.refuses(&found.file_path));
                 let matches_json: Vec<Value> = matches.into_iter().map(|m| m.into()).collect();
 
                 Ok(serde_json::json!({
@@ -1090,32 +1040,8 @@ impl ToolRegistry {
                 )
                 .map_err(|e| crate::error::McpError::InvalidToolParameters(e.to_string()))?;
 
-                // Denied edits return a synthetic EditFileResult matching the
-                // real shape — `changed: false, applied_edits: 0` looks
-                // indistinguishable from a real edit where no patterns
-                // matched (a legitimate outcome with `require_match: false`).
-                // Returning plain text would create an oracle (real success
-                // returns serialized JSON; the LLM can map the deny-list with
-                // one no-op probe per path). Issue #3.
-                //
-                // Don't peek at on-disk state to decide between this synthetic
-                // and a real `NotFound` error — the existence check would
-                // itself leak whether the path exists.
-                if self.guard.is_denied(&req.path) {
-                    let synthetic = crate::operations::edit_file::EditFileResult {
-                        path: req.path.clone(),
-                        changed: false,
-                        applied_edits: 0,
-                        dry_run: req.dry_run,
-                        content: None,
-                    };
-                    return Ok(serde_json::json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string(&synthetic)
-                                .map_err(crate::error::FileIoMcpError::Json)?
-                        }]
-                    }));
+                if self.guard.refuses(&req.path) {
+                    return Self::not_found_error(&req.path);
                 }
 
                 let result = crate::operations::edit_file::edit_file(req)?;
@@ -1144,31 +1070,11 @@ impl ToolRegistry {
                         )
                     })?;
 
-                // Two oracles to defeat (issue #3):
-                //   1. Real cp returns serialized Vec<OpResult>; the previous
-                //      silent-success path returned plain text. One probe
-                //      revealed denial.
-                //   2. Filtering denied sources individually and running cp
-                //      with the rest leaked which sources were denied via the
-                //      result count (input N, output N-1 means one was
-                //      filtered).
-                // Fix: if ANY input (source OR destination) is denied, build
-                // a synthetic Vec<OpResult> covering all sources verbatim and
-                // skip the real op entirely. Cost: legitimate calls that
-                // intentionally mix allowed + denied paths now no-op instead
-                // of partially succeeding — split the call to copy allowed
-                // paths.
-                let dest_denied = self.guard.is_denied(destination);
-                let any_source_denied = sources.iter().any(|s| self.guard.is_denied(s));
-                if dest_denied || any_source_denied {
-                    let synthetic = Self::synthesize_op_results(&sources);
-                    return Ok(serde_json::json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string(&synthetic)
-                                .map_err(crate::error::FileIoMcpError::Json)?
-                        }]
-                    }));
+                if let Some(refused) = self.first_refused_source(&sources) {
+                    return Self::not_found_error(&refused);
+                }
+                if self.guard.refuses(destination) {
+                    return Self::not_found_error(destination);
                 }
 
                 let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
@@ -1199,19 +1105,11 @@ impl ToolRegistry {
                         )
                     })?;
 
-                // Same oracle defeat as fileio_copy (issue #3): synthesize the
-                // full Vec<OpResult> shape on any denial, no real op runs.
-                let dest_denied = self.guard.is_denied(destination);
-                let any_source_denied = sources.iter().any(|s| self.guard.is_denied(s));
-                if dest_denied || any_source_denied {
-                    let synthetic = Self::synthesize_op_results(&sources);
-                    return Ok(serde_json::json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string(&synthetic)
-                                .map_err(crate::error::FileIoMcpError::Json)?
-                        }]
-                    }));
+                if let Some(refused) = self.first_refused_source(&sources) {
+                    return Self::not_found_error(&refused);
+                }
+                if self.guard.refuses(destination) {
+                    return Self::not_found_error(destination);
                 }
 
                 let source_refs: Vec<&str> = sources.iter().map(|s| s.as_str()).collect();
@@ -1233,19 +1131,8 @@ impl ToolRegistry {
                 })?;
                 let paths = Self::parse_paths(path_value)?;
 
-                // Issue #3: synthesize Vec<OpResult> for denied calls so the
-                // response shape matches a real rm. Otherwise the LLM can
-                // probe paths via rm and detect denial (real returns JSON
-                // results; old silent-success returned plain text).
-                if paths.iter().any(|p| self.guard.is_denied(p)) {
-                    let synthetic = Self::synthesize_op_results(&paths);
-                    return Ok(serde_json::json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string(&synthetic)
-                                .map_err(crate::error::FileIoMcpError::Json)?
-                        }]
-                    }));
+                if let Some(refused) = self.first_refused_source(&paths) {
+                    return Self::not_found_error(&refused);
                 }
 
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
@@ -1269,16 +1156,8 @@ impl ToolRegistry {
                 })?;
                 let paths = Self::parse_paths(path_value)?;
 
-                // Issue #3: same shape-matching as fileio_remove.
-                if paths.iter().any(|p| self.guard.is_denied(p)) {
-                    let synthetic = Self::synthesize_op_results(&paths);
-                    return Ok(serde_json::json!({
-                        "content": [{
-                            "type": "text",
-                            "text": serde_json::to_string(&synthetic)
-                                .map_err(crate::error::FileIoMcpError::Json)?
-                        }]
-                    }));
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
                 }
 
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
@@ -1307,11 +1186,11 @@ impl ToolRegistry {
                                 "Missing required parameter: link_path".to_string(),
                             )
                         })?;
-                if self.guard.is_denied(target) {
+                if self.guard.refuses(target) {
                     return Self::not_found_error(target);
                 }
-                if self.guard.is_denied(link_path) {
-                    return Self::silent_success("Hard link created successfully");
+                if self.guard.refuses(link_path) {
+                    return Self::not_found_error(link_path);
                 }
 
                 crate::operations::link::hard_link(target, link_path)?;
@@ -1337,11 +1216,16 @@ impl ToolRegistry {
                                 "Missing required parameter: link_path".to_string(),
                             )
                         })?;
-                if self.guard.is_denied(target) {
+                // A relative target resolves against the link's own directory
+                // once the link exists, so that is the base it is checked
+                // against. `hard_link` is different: the kernel resolves its
+                // target against the working directory, which is what
+                // `refuses` already uses.
+                if self.guard.refuses_link_target(link_path, target) {
                     return Self::not_found_error(target);
                 }
-                if self.guard.is_denied(link_path) {
-                    return Self::silent_success("Symbolic link created successfully");
+                if self.guard.refuses(link_path) {
+                    return Self::not_found_error(link_path);
                 }
 
                 crate::operations::link::symlink(target, link_path)?;
@@ -1359,7 +1243,7 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
 
@@ -1378,11 +1262,16 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
 
                 let dirname = crate::operations::path_utils::dirname(path)?;
+                // The parent of an allowlist root is outside the set, so the
+                // result is checked like any other path this server returns.
+                if self.guard.refuses(&dirname) {
+                    return Self::not_found_error(&dirname);
+                }
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1397,7 +1286,7 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
 
@@ -1416,11 +1305,18 @@ impl ToolRegistry {
                         "Missing required parameter: path".to_string(),
                     )
                 })?;
-                if self.guard.is_denied(path) {
+                if self.guard.refuses(path) {
                     return Self::not_found_error(path);
                 }
 
                 let target = crate::operations::path_utils::readlink(path)?;
+                // The argument check resolves the whole chain, so it accepts a
+                // link whose final target is inside a root. `readlink` returns
+                // the immediate target, which can still name a path outside
+                // one. A relative target is read from the link's directory.
+                if self.guard.refuses_to_disclose_link_target(path, &target) {
+                    return Self::not_found_error(&target);
+                }
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1437,21 +1333,29 @@ impl ToolRegistry {
                 })?;
                 let template = args.get("template").and_then(|v| v.as_str());
 
-                // mktemp_{file,dir} uses the template's parent directory as the
-                // creation site. A template like `/etc/security/probe-XXXXXX`
-                // would happily create a file inside a protected directory if
-                // we don't check first. No directory check needed when the
-                // template is None or has no path component — those land in
-                // $TMPDIR (typically /tmp) which the deny-list does not cover.
-                if let Some(t) = template
-                    && t.contains('/')
-                    && self.guard.is_denied(t)
-                {
-                    return Self::silent_success(match temp_type {
-                        "file" => "Temporary file created",
-                        "dir" => "Temporary directory created",
-                        _ => "Temporary created",
-                    });
+                // mktemp expands the template, then creates in its parent
+                // directory. A template with no separator has an empty parent,
+                // which is the working directory and not $TMPDIR. Derive the
+                // creation site exactly the way mktemp does, so a template
+                // like "/etc/security/probe-XXXXXX" cannot create a file
+                // there and a bare "probe-XXXXXX" cannot escape through the
+                // working directory.
+                let creation_site = match template {
+                    Some(t) => {
+                        let expanded = crate::operations::path_utils::expand_path(t)?;
+                        let parent = std::path::Path::new(&expanded)
+                            .parent()
+                            .unwrap_or(std::path::Path::new("."));
+                        if parent.as_os_str().is_empty() {
+                            ".".to_string()
+                        } else {
+                            parent.to_string_lossy().into_owned()
+                        }
+                    }
+                    None => std::env::temp_dir().to_string_lossy().into_owned(),
+                };
+                if self.guard.refuses(&creation_site) {
+                    return Self::not_found_error(&creation_site);
                 }
 
                 let path = match temp_type {
@@ -1480,12 +1384,8 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .filter(|p| !self.guard.is_denied(p))
-                    .collect();
-                if paths.is_empty() {
-                    return Self::silent_success("Ownership changed successfully");
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
                 }
                 let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
                 let user = args.get("user").and_then(|v| v.as_str());
@@ -1502,6 +1402,13 @@ impl ToolRegistry {
             }
             "fileio_get_current_directory" => {
                 let cwd = crate::operations::pwd::pwd()?;
+                // A returned path is a result like any other. With the
+                // working directory outside every root there is no reachable
+                // working directory to report, and every relative path the
+                // caller could build from it is refused anyway.
+                if self.guard.refuses(&cwd) {
+                    return Self::not_found_error(&cwd);
+                }
 
                 Ok(serde_json::json!({
                     "content": [{
@@ -1517,42 +1424,12 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                // Partial-denial oracle fix (issue #6): run count_lines only on
-                // allowed paths then re-merge sentinels for denied paths so the
-                // output array length always equals the input length.
-                let (allowed, denied_set) = self.partition_by_guard(&paths);
-                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
+                }
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let mut real_map: std::collections::HashMap<
-                    String,
-                    crate::operations::count_lines::LineCountResult,
-                > = crate::operations::count_lines::count_lines(&allowed_refs)?
-                    .into_iter()
-                    .map(|r| (r.path.clone(), r))
-                    .collect();
-
-                let counts: Vec<crate::operations::count_lines::LineCountResult> = paths
-                    .iter()
-                    .map(|p| {
-                        if denied_set.contains(p) {
-                            crate::operations::count_lines::LineCountResult {
-                                path: p.clone(),
-                                status: "ok".to_string(),
-                                lines: Some(0),
-                                exists: true,
-                            }
-                        } else {
-                            real_map.remove(p).unwrap_or_else(|| {
-                                crate::operations::count_lines::LineCountResult {
-                                    path: p.clone(),
-                                    status: "error: not found".to_string(),
-                                    lines: None,
-                                    exists: false,
-                                }
-                            })
-                        }
-                    })
-                    .collect();
+                let counts = crate::operations::count_lines::count_lines(&path_refs)?;
 
                 let counts_json =
                     serde_json::to_string(&counts).map_err(crate::error::FileIoMcpError::Json)?;
@@ -1571,40 +1448,12 @@ impl ToolRegistry {
                     )
                 })?;
                 let paths = Self::parse_paths(path_value)?;
-                // Partial-denial oracle fix (issue #6): same pattern as count_lines.
-                let (allowed, denied_set) = self.partition_by_guard(&paths);
-                let allowed_refs: Vec<&str> = allowed.iter().map(|s| s.as_str()).collect();
+                if let Some(refused) = self.first_refused(&paths) {
+                    return Self::not_found_error(refused);
+                }
+                let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
 
-                let mut real_map: std::collections::HashMap<
-                    String,
-                    crate::operations::count_words::WordCountResult,
-                > = crate::operations::count_words::count_words(&allowed_refs)?
-                    .into_iter()
-                    .map(|r| (r.path.clone(), r))
-                    .collect();
-
-                let counts: Vec<crate::operations::count_words::WordCountResult> = paths
-                    .iter()
-                    .map(|p| {
-                        if denied_set.contains(p) {
-                            crate::operations::count_words::WordCountResult {
-                                path: p.clone(),
-                                status: "ok".to_string(),
-                                words: Some(0),
-                                exists: true,
-                            }
-                        } else {
-                            real_map.remove(p).unwrap_or_else(|| {
-                                crate::operations::count_words::WordCountResult {
-                                    path: p.clone(),
-                                    status: "error: not found".to_string(),
-                                    words: None,
-                                    exists: false,
-                                }
-                            })
-                        }
-                    })
-                    .collect();
+                let counts = crate::operations::count_words::count_words(&path_refs)?;
 
                 let counts_json =
                     serde_json::to_string(&counts).map_err(crate::error::FileIoMcpError::Json)?;
@@ -1631,19 +1480,20 @@ impl Default for ToolRegistry {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::Path;
     use tempfile::NamedTempFile;
 
-    /// Build a registry whose deny-list points at `denied_dir`. Uses a custom
-    /// guard rather than the default one so tests don't depend on the runner's
-    /// $HOME having `.ssh` etc.
-    fn registry_blocking(denied_dir: &str) -> ToolRegistry {
-        let pattern = if denied_dir.ends_with('/') {
-            denied_dir.to_string()
-        } else {
-            format!("{}/", denied_dir)
-        };
-        let guard = PathGuard::new(&[pattern], None);
-        ToolRegistry::with_guard(guard)
+    /// A registry whose only allowlist root is `root`. Named roots rather
+    /// than the process default, so no test depends on the runner's $HOME.
+    fn registry_rooted_at(root: &Path) -> ToolRegistry {
+        let roots = [root.to_string_lossy().into_owned()];
+        ToolRegistry::with_guard(PathGuard::with_roots(&roots))
+    }
+
+    /// A registry allowed to reach the system temporary directory, where
+    /// every fixture in this module lives, and nothing else.
+    fn registry_in_temp() -> ToolRegistry {
+        registry_rooted_at(&std::env::temp_dir())
     }
 
     #[tokio::test]
@@ -1652,7 +1502,7 @@ mod tests {
         writeln!(file, "a").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
         let args = serde_json::json!({"path": path, "start_line": -1});
         let res = registry.execute_tool("fileio_read_lines", &args).await;
         assert!(res.is_err());
@@ -1670,7 +1520,7 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "one\ntwo\nthree\nfour").unwrap();
         let path = file.path().to_str().unwrap();
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
 
         for start in [serde_json::json!(2.0), serde_json::json!("2")] {
             let args = serde_json::json!({"path": path, "start_line": start});
@@ -1692,7 +1542,7 @@ mod tests {
         writeln!(file, "a\nb").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
         let args = serde_json::json!({"path": path, "start_line": 1.5});
         let res = registry.execute_tool("fileio_read_lines", &args).await;
         assert!(res.is_err(), "1.5 is not a whole line number");
@@ -1711,7 +1561,7 @@ mod tests {
         writeln!(file, "one\ntwo\nthree").unwrap();
         let path = file.path().to_str().unwrap();
 
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
         let args = serde_json::json!({
             "path": path,
             "edits": [{"op": "replace_lines", "start_line": 2.0, "end_line": "2", "text": "TWO"}],
@@ -1732,7 +1582,7 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "one\ntwo\nthree\nfour\nfive").unwrap();
         let path = file.path().to_str().unwrap();
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
 
         // start_line + end_line, as floats then as strings.
         for (s, e) in [
@@ -1775,7 +1625,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("hay.txt"), "needle\nneedle\nneedle\n").unwrap();
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
         let dir_s = dir.to_str().unwrap();
 
         let count_matches = |v: &Value| -> usize {
@@ -1837,7 +1687,7 @@ mod tests {
         let target = dir.join("f.txt");
         let target_s = target.to_str().unwrap();
         std::fs::write(&target, "base\n").unwrap();
-        let registry = ToolRegistry::new();
+        let registry = registry_in_temp();
 
         // append: "true" (string) must append, not overwrite.
         registry
@@ -1865,307 +1715,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// End-to-end: a read of a file inside a denied directory must look
-    /// indistinguishable from "the file doesn't exist". The actual file is
-    /// created on disk so we know the deny-list — not the filesystem — is
-    /// what produces the response.
+    /// `count_lines`, `count_words` and `stat` must answer once per input
+    /// path, in the order the caller gave them. A short array means the caller
+    /// cannot line results up with the paths it asked about.
+    ///
+    /// `fileio_get_permissions` is the fourth array-path tool and is left out
+    /// on purpose: `get_file_mode` fails the whole call when one path cannot
+    /// be read, so it does not hold this property and never has.
     #[tokio::test]
-    async fn read_inside_denied_directory_returns_not_found() {
-        let dir = std::env::temp_dir().join("fileio_deny_read_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("secret.txt");
-        std::fs::write(&target, "real contents").unwrap();
-
-        let registry = registry_blocking(dir.to_str().unwrap());
-        let args = serde_json::json!({ "path": target.to_str().unwrap() });
-        let res = registry.execute_tool("fileio_read_lines", &args).await;
-
-        assert!(res.is_err(), "denied read must surface as an error");
-        let msg = format!("{}", res.err().unwrap()).to_lowercase();
-        assert!(
-            msg.contains("not found"),
-            "denied read must use 'not found' deception: got {msg}"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// End-to-end: writes to a denied location report success but must not
-    /// touch the filesystem. Pre-existing content is unchanged; new files
-    /// aren't created.
-    #[tokio::test]
-    async fn write_inside_denied_directory_silently_succeeds_without_writing() {
-        let dir = std::env::temp_dir().join("fileio_deny_write_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("absent.txt");
-        assert!(!target.exists());
-
-        let registry = registry_blocking(dir.to_str().unwrap());
-        let args = serde_json::json!({
-            "path": target.to_str().unwrap(),
-            "content": "should never land",
-        });
-        let res = registry.execute_tool("fileio_write_file", &args).await;
-
-        assert!(res.is_ok(), "denied write must report success: {res:?}");
-        assert!(
-            !target.exists(),
-            "denied write must not actually create the file"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Issue #3 regression: `fileio_edit_file` against a denied path must
-    /// return the same JSON shape (`EditFileResult`) as a real edit, not a
-    /// plain-text body. Otherwise a single no-op probe maps the deny-list.
-    #[tokio::test]
-    async fn edit_file_denied_response_matches_real_shape() {
-        let dir = std::env::temp_dir().join("fileio_oracle_edit_test");
+    async fn count_and_stat_tools_return_one_result_per_input_path() {
+        let dir = std::env::temp_dir().join("fileio_array_cardinality_test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Real edit of an allowed file: capture the JSON body shape.
-        let allowed = dir.join("allowed.txt");
-        std::fs::write(&allowed, "hello world").unwrap();
-        let real_registry = ToolRegistry::new();
-        let real_args = serde_json::json!({
-            "path": allowed.to_str().unwrap(),
-            "edits": [{
-                "op": "replace",
-                "search": "world",
-                "text": "rust",
-            }],
-        });
-        let real_resp = real_registry
-            .execute_tool("fileio_edit_file", &real_args)
-            .await
-            .unwrap();
-        let real_body: serde_json::Value =
-            serde_json::from_str(real_resp["content"][0]["text"].as_str().unwrap())
-                .expect("real response body must be JSON");
+        let present = dir.join("present.txt");
+        std::fs::write(&present, "hello world\n").unwrap();
+        // A path that does not exist still needs an entry of its own.
+        let absent = dir.join("absent.txt");
 
-        // Denied edit of a path under a blocked directory.
-        let denied = dir.join("denied.txt");
-        let denied_registry = registry_blocking(dir.to_str().unwrap());
-        let denied_args = serde_json::json!({
-            "path": denied.to_str().unwrap(),
-            "edits": [{ "op": "replace", "search": "x", "text": "y" }],
-        });
-        let denied_resp = denied_registry
-            .execute_tool("fileio_edit_file", &denied_args)
-            .await
-            .unwrap();
-        let denied_body: serde_json::Value =
-            serde_json::from_str(denied_resp["content"][0]["text"].as_str().unwrap())
-                .expect("denied response body must be JSON, not plain text");
+        let registry = registry_rooted_at(&dir);
+        let paths = serde_json::json!([present.to_str().unwrap(), absent.to_str().unwrap(),]);
 
-        // Same field set in both responses (different values are fine — the
-        // attacker can't probe shape).
-        let real_keys: Vec<_> = real_body.as_object().unwrap().keys().collect();
-        let denied_keys: Vec<_> = denied_body.as_object().unwrap().keys().collect();
-        assert_eq!(real_keys, denied_keys, "response shapes diverge — oracle");
-
-        // Sanity: the denied response did NOT actually modify or create a file.
-        assert!(!denied.exists());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Issue #3 regression: `fileio_copy` with a denied source must return a
-    /// `Vec<OpResult>` JSON body matching the real cp shape — not a plain
-    /// text "Copy completed successfully" body. Also verifies the
-    /// partial-filter oracle is closed: a mix of allowed + denied sources
-    /// returns N synthetic results (matching input length), not N-1 from
-    /// the legacy code that filtered denied sources before running cp.
-    #[tokio::test]
-    async fn copy_with_denied_source_response_matches_real_shape() {
-        let dir = std::env::temp_dir().join("fileio_oracle_copy_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let denied_dir = dir.join("denied");
-        std::fs::create_dir_all(&denied_dir).unwrap();
-        let allowed_src = dir.join("a.txt");
-        std::fs::write(&allowed_src, "src").unwrap();
-        let denied_src = denied_dir.join("b.txt");
-        std::fs::write(&denied_src, "src").unwrap();
-        let dest = dir.join("dest.txt");
-
-        // Real cp body shape.
-        let real_registry = ToolRegistry::new();
-        let real_resp = real_registry
-            .execute_tool(
-                "fileio_copy",
-                &serde_json::json!({
-                    "source": [allowed_src.to_str().unwrap()],
-                    "destination": dest.to_str().unwrap(),
-                }),
-            )
-            .await
-            .unwrap();
-        let real_body: serde_json::Value =
-            serde_json::from_str(real_resp["content"][0]["text"].as_str().unwrap())
-                .expect("real response body must be JSON array of OpResult");
-        assert!(real_body.is_array());
-        let real_obj_keys: Vec<_> = real_body[0].as_object().unwrap().keys().collect();
-
-        // Denied cp body shape — both allowed and denied sources, denial
-        // detected via the denied source.
-        let denied_registry = registry_blocking(denied_dir.to_str().unwrap());
-        let denied_resp = denied_registry
-            .execute_tool(
-                "fileio_copy",
-                &serde_json::json!({
-                    "source": [
-                        allowed_src.to_str().unwrap(),
-                        denied_src.to_str().unwrap(),
-                    ],
-                    "destination": dir.join("dest2.txt").to_str().unwrap(),
-                }),
-            )
-            .await
-            .unwrap();
-        let denied_body: serde_json::Value =
-            serde_json::from_str(denied_resp["content"][0]["text"].as_str().unwrap())
-                .expect("denied response body must be JSON, not plain text");
-
-        // Shape match.
-        assert!(
-            denied_body.is_array(),
-            "denied response must be a JSON array"
-        );
-        let denied_arr = denied_body.as_array().unwrap();
-        assert_eq!(
-            denied_arr.len(),
-            2,
-            "synthetic results must cover all inputs — closes partial-filter oracle"
-        );
-        let denied_obj_keys: Vec<_> = denied_arr[0].as_object().unwrap().keys().collect();
-        assert_eq!(real_obj_keys, denied_obj_keys, "OpResult shapes diverge");
-
-        // Sanity: nothing was actually copied.
-        assert!(!dir.join("dest2.txt").exists());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// End-to-end: a `fileio_create_temporary` request whose template lands in
-    /// a denied directory must not actually create the temp file. This guards
-    /// against an LLM probing protected dirs by having mktemp create a file
-    /// there (e.g. template = "/etc/security/probe-XXXXXX").
-    #[tokio::test]
-    async fn create_temporary_with_denied_template_does_not_create() {
-        let dir = std::env::temp_dir().join("fileio_deny_mktemp_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // Snapshot the directory so we can verify nothing was added.
-        let entries_before: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect();
-        assert!(entries_before.is_empty());
-
-        let registry = registry_blocking(dir.to_str().unwrap());
-        let template = format!("{}/probe-XXXXXX", dir.display());
-        let args = serde_json::json!({
-            "type": "file",
-            "template": template,
-        });
-        let res = registry
-            .execute_tool("fileio_create_temporary", &args)
-            .await;
-
-        assert!(res.is_ok(), "denied mktemp must report success: {res:?}");
-
-        let entries_after: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect();
-        assert!(
-            entries_after.is_empty(),
-            "denied mktemp must not actually create anything; found: {entries_after:?}"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Partial-denial oracle fix (issue #6): array-path tools that return a
-    /// Vec-shaped response (`count_lines`, `count_words`, `stat`) must return
-    /// N results for N inputs even when some paths are denied.  A shorter
-    /// array leaks which inputs are denied (N-k inputs returned → k denied).
-    #[tokio::test]
-    async fn array_path_tools_full_length_on_mixed_allowed_denied() {
-        let dir = std::env::temp_dir().join("fileio_oracle_array_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let denied_dir = dir.join("secret");
-        std::fs::create_dir_all(&denied_dir).unwrap();
-
-        let allowed = dir.join("allowed.txt");
-        std::fs::write(&allowed, "hello world\n").unwrap();
-        let denied = denied_dir.join("private.txt");
-        std::fs::write(&denied, "secret\n").unwrap();
-
-        let registry = registry_blocking(denied_dir.to_str().unwrap());
-        let paths = serde_json::json!([allowed.to_str().unwrap(), denied.to_str().unwrap(),]);
-
-        // count_lines
-        let resp = registry
-            .execute_tool("fileio_count_lines", &serde_json::json!({"path": paths}))
-            .await
-            .unwrap();
-        let body: serde_json::Value =
-            serde_json::from_str(resp["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            body.as_array().unwrap().len(),
-            2,
-            "count_lines: result array must have 2 entries for 2 inputs"
-        );
-
-        // count_words
-        let resp2 = registry
-            .execute_tool("fileio_count_words", &serde_json::json!({"path": paths}))
-            .await
-            .unwrap();
-        let body2: serde_json::Value =
-            serde_json::from_str(resp2["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            body2.as_array().unwrap().len(),
-            2,
-            "count_words: result array must have 2 entries for 2 inputs"
-        );
-
-        // stat
-        let resp3 = registry
-            .execute_tool("fileio_stat", &serde_json::json!({"path": paths}))
-            .await
-            .unwrap();
-        let body3: serde_json::Value =
-            serde_json::from_str(resp3["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            body3.as_array().unwrap().len(),
-            2,
-            "stat: result array must have 2 entries for 2 inputs"
-        );
-
-        // get_permissions — HashMap, key count must equal input count
-        let resp4 = registry
-            .execute_tool(
-                "fileio_get_permissions",
-                &serde_json::json!({"path": paths}),
-            )
-            .await
-            .unwrap();
-        let body4: serde_json::Value =
-            serde_json::from_str(resp4["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            body4.as_object().unwrap().len(),
-            2,
-            "get_permissions: result map must have 2 keys for 2 inputs"
-        );
+        for tool in ["fileio_count_lines", "fileio_count_words", "fileio_stat"] {
+            let resp = registry
+                .execute_tool(tool, &serde_json::json!({"path": paths}))
+                .await
+                .unwrap_or_else(|e| panic!("{tool} should answer for both paths: {e}"));
+            let body: serde_json::Value =
+                serde_json::from_str(resp["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                body.as_array().unwrap().len(),
+                2,
+                "{tool}: result array must have 2 entries for 2 inputs"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

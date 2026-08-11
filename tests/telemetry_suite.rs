@@ -42,6 +42,13 @@ fn run_and_capture(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Pin the path allowlist to the system temporary directory, where every
+    // fixture in this suite lives, so no test process can reach a home
+    // directory. A caller may still override it through `env`.
+    cmd.env(
+        "FILEIO_MCP_ALLOW_PATHS",
+        std::env::temp_dir().to_string_lossy().into_owned(),
+    );
     for (key, value) in env {
         cmd.env(key, value);
     }

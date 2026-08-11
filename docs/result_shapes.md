@@ -19,7 +19,9 @@ Examples:
     "content": [{ "type": "json", "value": [ {"path":"/tmp/x","status":"ok","exists":true} ] }]
   }
 
-These shapes allow callers to inspect per-path status without failing the whole operation for "negative" results such as not-found.
+These shapes let a caller read per-path status without the whole operation failing for a "negative" result such as not-found.
+
+One case does fail the whole call: a path the path guard refuses. The call returns "not found" and names that path, and no per-path entry is produced for any of them. Split the call and ask again for the paths inside the allowlist. See [path_safety.md](path_safety.md).
 
 More examples
 

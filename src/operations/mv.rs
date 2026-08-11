@@ -3,70 +3,9 @@
 // Move or rename files or directories
 
 use crate::error::{FileIoError, Result};
-use globset::{Glob, GlobMatcher};
+use crate::operations::path_utils::{expand_glob, expand_path, is_glob_pattern};
 use std::fs;
-use std::path::{Path, PathBuf};
-
-/// Check if a string contains glob patterns
-fn is_glob_pattern(s: &str) -> bool {
-    s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
-}
-
-/// Expand glob pattern to matching paths
-fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
-    let expanded_pattern = shellexpand::full(pattern)
-        .map_err(|e| {
-            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
-                "Failed to expand path \'{}\': {}",
-                pattern, e
-            )))
-        })
-        .map(|expanded| expanded.into_owned())?;
-    let path = Path::new(&expanded_pattern);
-    let (base_dir, glob_str) = if let Some(parent) = path.parent() {
-        if parent.as_os_str().is_empty() {
-            (
-                Path::new("."),
-                path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern),
-            )
-        } else {
-            (
-                parent,
-                path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern),
-            )
-        }
-    } else {
-        (Path::new("."), pattern)
-    };
-
-    let glob = Glob::new(glob_str).map_err(|e| {
-        FileIoError::InvalidPath(format!("Invalid glob pattern {}: {}", pattern, e))
-    })?;
-    let matcher: GlobMatcher = glob.compile_matcher();
-
-    let mut matches = Vec::new();
-    let entries = fs::read_dir(base_dir).map_err(|e| {
-        FileIoError::ReadError(format!(
-            "Failed to read directory {}: {}",
-            base_dir.display(),
-            e
-        ))
-    })?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            FileIoError::ReadError(format!("Failed to read directory entry: {}", e))
-        })?;
-        let entry_path = entry.path();
-        if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
-            && matcher.is_match(file_name)
-        {
-            matches.push(entry_path);
-        }
-    }
-
-    Ok(matches)
-}
+use std::path::Path;
 
 /// Move or rename files or directories (supports glob patterns and arrays of paths)
 #[derive(Debug, serde::Serialize)]
@@ -115,8 +54,9 @@ pub fn mv(sources: &[&str], destination: &str) -> Result<Vec<OpResult>> {
                 all_sources.push(s.to_string());
             }
         } else {
-            // Single path
-            all_sources.push(source.to_string());
+            // Expand the same way `expand_glob` expands a pattern, so the
+            // path acted on is the path the guard approved.
+            all_sources.push(expand_path(source)?);
         }
     }
 

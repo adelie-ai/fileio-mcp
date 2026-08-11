@@ -90,9 +90,9 @@ RUST_LOG=debug fileio-mcp serve
 RUST_LOG=info,fileio_mcp=debug fileio-mcp serve
 ```
 
-**The level contract.** INFO carries ids, counts, durations and tool names, never content. DEBUG carries tool arguments, including every path this server touches. A denied path is no exception: this server's whole design keeps a rejection invisible to the model (see the `path_guard` module doc), so a denial is exactly where a path would most tempt a future change to log it. Never do that above DEBUG.
+**The level contract.** INFO carries ids, counts, durations and tool names, never content. DEBUG carries tool arguments, including every path this server touches. A refused path is no exception: a refusal reads to the caller as an absent file (see the `path_guard` module doc), so it is exactly where a path would most tempt a future change to log it. Never do that above DEBUG.
 
-**This server's own metric.** `fileio.guard.rejections`, labelled by `reason` (`file` or `directory`, never the entry or the path that matched it). mcp-core's own `mcp.tools.call` counter cannot see a guard denial: the service returns a synthetic success or a plain "not found", so the call looks ordinary from the dispatch layer's side. This counter is the one place a rejection becomes observable, without telling the caller it happened.
+**This server's own metric.** `fileio.guard.rejections`, labelled by `reason` (`outside_allowlist`, `blocked` or `unresolvable`, never the root, the entry or the path that matched it). mcp-core's own `mcp.tools.call` counter cannot see a guard refusal: the service answers "not found", so the call looks ordinary from the dispatch layer's side. This counter is the one place a refusal becomes observable, without telling the caller it happened.
 
 **Exporting to a collector.** Off by default.
 
@@ -109,6 +109,38 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
 ```
 
 With the feature off, `cargo tree` resolves no `opentelemetry*` crate and a default build pays nothing for it. With no collector configured, the process still writes a periodic metrics summary to stderr.
+
+## Path safety
+
+This server reaches only the directories it is told to reach. `PathGuard` holds
+an allowlist of roots. A path inside a root is reachable. Every other path does
+not exist, as far as this server is concerned: an argument outside the set comes
+back as "not found", and an entry outside the set is dropped from a listing
+before the result leaves the server.
+
+Name the roots with `--allow-path`, repeated once per directory:
+
+```sh
+fileio-mcp serve --allow-path "$HOME/Projects" --allow-path /tmp
+```
+
+Or with the environment variable, separated by `:`:
+
+```sh
+FILEIO_MCP_ALLOW_PATHS="$HOME/Projects:/tmp" fileio-mcp serve
+```
+
+With neither set, a built-in default covers the system temporary directory and
+`~/Documents`, `~/Downloads`, `~/Desktop` and `~/Projects`. That is a starting
+point for a desktop install, not a recommendation. Name what the work needs.
+
+`--block-path` and `--block-file` are deprecated. They still subtract from the
+allowlist, so an existing deployment keeps its restrictions, and the server logs
+one deprecation warning at startup. A later release refuses the flags.
+
+See [docs/path_safety.md](docs/path_safety.md) for the design: the
+resolve-then-compare order that handles symlinks and `..`, the fail-closed
+rules, and the check-then-use race the guard does not close.
 
 ## Extending operations
 

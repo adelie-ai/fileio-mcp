@@ -1,72 +1,49 @@
 #![deny(warnings)]
 
-//! Path guard: deny-list for sensitive filesystem paths.
+//! Path guard: an allowlist of the filesystem roots this server may reach.
 //!
-//! Denied paths are made invisible — reads return "not found", writes silently
-//! succeed, directory listings omit entries. This prevents an LLM from knowing
-//! the restriction exists.
+//! A path inside a root is reachable. Every other path does not exist, as far
+//! as this server is concerned. A refused argument comes back as "not found",
+//! and a refused entry is dropped from a result before the result leaves the
+//! server. Both checks are needed: an argument check on its own lets a listing
+//! of a permitted directory disclose a path outside the set.
+//!
+//! The guard resolves a path first and compares it to the roots second, so a
+//! symlink out of a root and a `..` traversal are both decided on the real
+//! path. It fails closed: anything it cannot positively identify is refused.
+//!
+//! See `docs/path_safety.md` for the full design, including where the roots
+//! come from, the fail-closed rules, and the check-then-use race this guard
+//! does not close.
 
-use std::path::{Path, PathBuf};
+use std::collections::VecDeque;
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 
 use mcp_core::telemetry::metrics::{self, Label};
 
-/// A deny-list entry: either an exact file or a directory prefix.
-#[derive(Debug, Clone)]
-enum DenyEntry {
-    /// Block access to this exact file path.
-    File(PathBuf),
-    /// Block access to anything under this directory (inclusive).
-    Directory(PathBuf),
-}
-
-/// Which shape of deny-list entry matched a denied path.
+/// Environment variable naming the allowlist roots, separated by `:`.
 ///
-/// This is the bounded `reason` a guard rejection records — never the entry
-/// itself. An entry (even a built-in default) is still a path, and D10 keeps
-/// a path off every metric label and every log field alike.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DenyReason {
-    /// An exact-file entry matched.
-    File,
-    /// A directory-prefix entry matched.
-    Directory,
-}
+/// Point a run at a directory made to be thrown away, and the process cannot
+/// reach anything outside it, whatever the code does. The test suites that
+/// start the real binary set it; the ones that build the guard directly pin
+/// their roots with [`PathGuard::with_roots`] instead.
+pub const ALLOW_PATHS_ENV: &str = "FILEIO_MCP_ALLOW_PATHS";
 
-impl DenyReason {
-    fn as_label(self) -> &'static str {
-        match self {
-            DenyReason::File => "file",
-            DenyReason::Directory => "directory",
-        }
-    }
-}
+/// Directories under `HOME` in the built-in default allowlist. A starting
+/// point for a desktop install, not a recommendation: name the directories
+/// the work needs with `--allow-path`.
+const DEFAULT_HOME_ROOTS: &[&str] = &["Documents", "Downloads", "Desktop", "Projects"];
 
-/// Metric name for a path the guard denied, labelled by [`DenyReason`].
+/// Sensitive paths subtracted from the allowlist, for the case where an
+/// operator allows a root wide enough to contain one of them. Entries ending
+/// with `/` are directory prefixes.
 ///
-/// mcp-core's own dispatch already counts every tool call by name and
-/// outcome (`mcp.tools.call`), but a denial is invisible to that counter by
-/// design: `execute_tool` returns a synthetic success or a plain "not
-/// found", so the call looks ordinary from the dispatch layer's point of
-/// view (see the module doc). This is the one place a rejection becomes
-/// observable at all.
-const GUARD_REJECTIONS_METRIC: &str = "fileio.guard.rejections";
-
-/// Record one guard rejection. `reason` is a two-value enum, so the label
-/// can never grow past the registry's cardinality cap.
-fn record_rejection(reason: DenyReason) {
-    let label = reason.as_label();
-    metrics::increment(GUARD_REJECTIONS_METRIC, &[Label::new("reason", label)]);
-    tracing::debug!(reason = label, "path denied by guard");
-}
-
-/// Immutable path guard built once at startup.
-#[derive(Debug, Clone)]
-pub struct PathGuard {
-    entries: Vec<DenyEntry>,
-}
-
-/// Hardcoded sensitive paths. Entries ending with `/` are directory prefixes.
-const DEFAULT_DENY: &[&str] = &[
+/// This is a path rule, so it holds against a path. It does not hold against
+/// a hard link made outside this server: a second name inside an allowed root
+/// reaches a blocked file's content and mode, and no path test can see the
+/// difference. See `docs/path_safety.md` and issue #27.
+const DEFAULT_BLOCKS: &[&str] = &[
     "~/.ssh/",
     "~/.gnupg/",
     "~/.gpg/",
@@ -84,347 +61,648 @@ const DEFAULT_DENY: &[&str] = &[
     "/etc/security/",
 ];
 
-impl PathGuard {
-    /// Build a PathGuard from hardcoded defaults + optional CLI extras + optional blocklist file.
-    pub fn new(extra_paths: &[String], block_file: Option<&str>) -> Self {
-        let mut entries = Vec::new();
+/// Most symbolic links one resolution may follow before the guard gives up
+/// and refuses the path. A link loop is the case this bounds.
+const MAX_LINK_HOPS: usize = 40;
 
-        // Load hardcoded defaults
-        for pattern in DEFAULT_DENY {
-            Self::add_pattern(&mut entries, pattern);
+/// A blocked entry: either an exact file or a directory prefix.
+#[derive(Debug, Clone)]
+enum BlockEntry {
+    /// Block this exact file path.
+    File(PathBuf),
+    /// Block anything under this directory, the directory included.
+    Directory(PathBuf),
+}
+
+/// Why the guard refused a path.
+///
+/// This is the bounded `reason` a refusal records, never the path and never
+/// which entry matched. An allowlist root and a block entry are both paths,
+/// and D10 keeps a path off every metric label and every log field alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefusalReason {
+    /// The resolved path is under no allowlist root.
+    OutsideAllowlist,
+    /// The resolved path is inside a root but under a block entry.
+    Blocked,
+    /// The guard could not work out what the path is, so it refused.
+    Unresolvable,
+}
+
+impl RefusalReason {
+    fn as_label(self) -> &'static str {
+        match self {
+            RefusalReason::OutsideAllowlist => "outside_allowlist",
+            RefusalReason::Blocked => "blocked",
+            RefusalReason::Unresolvable => "unresolvable",
         }
-
-        // Load CLI extras
-        for pattern in extra_paths {
-            Self::add_pattern(&mut entries, pattern);
-        }
-
-        // Load blocklist file
-        if let Some(file_path) = block_file {
-            // The blocklist file itself is denied.
-            let expanded = shellexpand::tilde(file_path).into_owned();
-            entries.push(DenyEntry::File(PathBuf::from(&expanded)));
-
-            match std::fs::read_to_string(&expanded) {
-                Ok(contents) => {
-                    for line in contents.lines() {
-                        let line = line.trim();
-                        if line.is_empty() || line.starts_with('#') {
-                            continue;
-                        }
-                        Self::add_pattern(&mut entries, line);
-                    }
-                }
-                // The reason and the outcome belong on this line; the path
-                // does not (D10 — a path is content, not an id, a count or a
-                // duration). `outcome` names what the server does about it:
-                // it keeps running with the defaults and any --block-path
-                // extras, just without this file's entries.
-                Err(e) => {
-                    tracing::warn!(
-                        reason = ?e.kind(),
-                        outcome = "block_file_not_loaded",
-                        "could not read the configured block-file; continuing \
-                         without its entries"
-                    );
-                }
-            }
-        }
-
-        Self { entries }
-    }
-
-    fn add_pattern(entries: &mut Vec<DenyEntry>, pattern: &str) {
-        // `shellexpand::tilde` rather than `pattern.replace('~', home)` — the
-        // literal replace substitutes every `~` in the string, not just a
-        // leading one, which is a footgun for patterns that contain `~` mid-path.
-        let expanded = shellexpand::tilde(pattern).into_owned();
-        if expanded.ends_with('/') {
-            entries.push(DenyEntry::Directory(PathBuf::from(&expanded)));
-        } else {
-            entries.push(DenyEntry::File(PathBuf::from(&expanded)));
-        }
-    }
-
-    /// Check if a path is denied.
-    ///
-    /// Tilde-expands the input before canonicalizing so callers can pass paths
-    /// like `~/.ssh/id_rsa` directly. Without this expansion, an adversarial
-    /// caller could bypass the deny-list by passing `~/...` strings — the
-    /// downstream operation crate calls `shellexpand::full` after the guard
-    /// check and accesses the real file (issue #2). $HOME / env-var inputs are
-    /// not handled here because env vars are part of the trusted startup
-    /// environment, not attacker-controlled.
-    pub fn is_denied(&self, path: &str) -> bool {
-        let expanded = shellexpand::tilde(path);
-        let canonical = canonicalize_best_effort(expanded.as_ref());
-        self.is_denied_canonical(&canonical)
-    }
-
-    /// Check if an already-canonicalized path is denied.
-    ///
-    /// A match records a `fileio.guard.rejections` metric and a DEBUG log
-    /// line, both naming only the shape of entry that matched — never the
-    /// path, and never which specific entry (D10). This is the single
-    /// interception point for every caller in this crate (`is_denied` and
-    /// `filter_paths` both route through it), so it is the one place that
-    /// needs to record the rejection rather than each of the ~25 call sites
-    /// across `tools.rs`.
-    pub fn is_denied_canonical(&self, canonical: &Path) -> bool {
-        for entry in &self.entries {
-            let reason = match entry {
-                DenyEntry::File(denied) if canonical == denied => Some(DenyReason::File),
-                DenyEntry::Directory(denied) if canonical.starts_with(denied) => {
-                    Some(DenyReason::Directory)
-                }
-                DenyEntry::File(_) | DenyEntry::Directory(_) => None,
-            };
-            if let Some(reason) = reason {
-                record_rejection(reason);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Filter a list of paths, returning only non-denied ones.
-    /// Each path should already be shell-expanded.
-    pub fn filter_paths<'a>(&self, paths: &[&'a str]) -> Vec<&'a str> {
-        paths
-            .iter()
-            .filter(|p| !self.is_denied(p))
-            .copied()
-            .collect()
     }
 }
 
-/// Canonicalize a path, falling back to best-effort if the path doesn't exist.
-/// Walks up to the nearest existing ancestor, canonicalizes that, then appends
-/// the remaining suffix.
-fn canonicalize_best_effort(path: &str) -> PathBuf {
-    let p = Path::new(path);
+/// Metric name for a path the guard refused, labelled by [`RefusalReason`].
+///
+/// mcp-core's own dispatch counts every tool call by name and outcome
+/// (`mcp.tools.call`), but it cannot see a refusal: the server answers "not
+/// found", so the call looks ordinary from the dispatch layer's point of
+/// view. This is the one place a refusal becomes observable at all.
+const GUARD_REJECTIONS_METRIC: &str = "fileio.guard.rejections";
 
-    // Fast path: file exists, full canonicalization works
-    if let Ok(canonical) = std::fs::canonicalize(p) {
-        return canonical;
+/// Record one refusal. `reason` is a three-value enum, so the label can never
+/// grow past the registry's cardinality cap.
+fn record_refusal(reason: RefusalReason) {
+    let label = reason.as_label();
+    metrics::increment(GUARD_REJECTIONS_METRIC, &[Label::new("reason", label)]);
+    tracing::debug!(reason = label, "path refused by guard");
+}
+
+/// Immutable path guard built once at startup.
+#[derive(Debug, Clone)]
+pub struct PathGuard {
+    /// Resolved allowlist roots. An empty list refuses every path.
+    roots: Vec<PathBuf>,
+    /// Resolved block entries, subtracted from the allowlist.
+    blocks: Vec<BlockEntry>,
+}
+
+impl PathGuard {
+    /// Build the guard from the server's own flags and environment.
+    ///
+    /// The allowlist comes from the first source that is set: `allow_paths`
+    /// (the `--allow-path` flag), then [`ALLOW_PATHS_ENV`], then the built-in
+    /// default set. An environment variable that is set but empty yields an
+    /// empty allowlist, which refuses every path rather than falling back to
+    /// a wider default.
+    ///
+    /// `block_paths` and `block_file` are the deprecated `--block-path` and
+    /// `--block-file` flags. They still subtract from the allowlist, so an
+    /// existing deployment keeps its restrictions.
+    pub fn from_flags(
+        allow_paths: &[String],
+        block_paths: &[String],
+        block_file: Option<&str>,
+    ) -> Self {
+        Self {
+            roots: resolve_roots(&configured_roots(allow_paths)),
+            blocks: collect_blocks(block_paths, block_file),
+        }
     }
 
-    // Walk up to find the nearest existing ancestor.
-    let mut existing = p.to_path_buf();
-    let mut suffix_parts: Vec<std::ffi::OsString> = Vec::new();
-
-    while let Some(parent) = existing.parent().map(Path::to_path_buf) {
-        if let Some(file_name) = existing.file_name() {
-            suffix_parts.push(file_name.to_os_string());
-        }
-        existing = parent;
-        if let Ok(canonical) = std::fs::canonicalize(&existing) {
-            let mut result = canonical;
-            for part in suffix_parts.into_iter().rev() {
-                result.push(part);
-            }
-            return result;
+    /// Build a guard whose allowlist is exactly `roots`, with only the
+    /// built-in block entries subtracted.
+    ///
+    /// Neither the environment nor the default root set is consulted, so a
+    /// caller that names a temporary directory here cannot reach a real path.
+    pub fn with_roots<S: AsRef<str>>(roots: &[S]) -> Self {
+        Self {
+            roots: resolve_roots(roots),
+            blocks: collect_blocks(&[], None),
         }
     }
 
-    // Last resort: return the path as-is.
-    p.to_path_buf()
+    /// Build a guard whose allowlist is exactly `roots`, minus the legacy
+    /// block entries as well as the built-in ones.
+    pub fn with_roots_and_blocks<S: AsRef<str>>(
+        roots: &[S],
+        block_paths: &[String],
+        block_file: Option<&str>,
+    ) -> Self {
+        Self {
+            roots: resolve_roots(roots),
+            blocks: collect_blocks(block_paths, block_file),
+        }
+    }
+
+    /// Whether the guard refuses `path`.
+    ///
+    /// The path is resolved first and compared second. A path the guard
+    /// cannot resolve is refused, because the guard cannot tell what it is.
+    ///
+    /// This is the single decision point for every caller in this crate, on
+    /// arguments and on results alike, so it is the one place that records
+    /// the refusal rather than each of the call sites across `tools.rs`.
+    pub fn refuses(&self, path: &str) -> bool {
+        self.refuses_resolved(resolve(path))
+    }
+
+    /// Whether the guard refuses `target` used as the target of a symbolic
+    /// link created at `link_path`.
+    ///
+    /// A relative target resolves against the link's own directory, because
+    /// that is the base the kernel resolves it from. Checking it against the
+    /// process working directory decides a different path from the one the
+    /// link will point at, and the server would create a link that leaves the
+    /// allowlist. An absolute target is checked as it stands.
+    pub fn refuses_link_target(&self, link_path: &str, target: &str) -> bool {
+        self.refuses_resolved(resolve_link_target(link_path, target))
+    }
+
+    /// Whether the guard refuses to disclose `target`, the text a symbolic
+    /// link at `link_path` holds.
+    ///
+    /// This asks a different question from [`PathGuard::refuses`], which
+    /// decides access and follows symlinks to do it. Disclosure is about the
+    /// text: a target reading `/elsewhere/back/x` names `/elsewhere` whatever
+    /// it resolves to, and a link whose chain ends inside a root can still
+    /// name a directory outside one. So this normalizes `.` and `..` and
+    /// follows nothing.
+    pub fn refuses_to_disclose_link_target(&self, link_path: &str, target: &str) -> bool {
+        self.refuses_resolved(normalize_link_target(link_path, target))
+    }
+
+    /// The decision, once a path has been resolved. `None` means the guard
+    /// could not work out what the path is, so it refuses.
+    fn refuses_resolved(&self, resolved: Option<PathBuf>) -> bool {
+        let Some(resolved) = resolved else {
+            record_refusal(RefusalReason::Unresolvable);
+            return true;
+        };
+
+        if !self.roots.iter().any(|root| resolved.starts_with(root)) {
+            record_refusal(RefusalReason::OutsideAllowlist);
+            return true;
+        }
+
+        let blocked = self.blocks.iter().any(|entry| match entry {
+            BlockEntry::File(blocked) => resolved == *blocked,
+            BlockEntry::Directory(blocked) => resolved.starts_with(blocked),
+        });
+        if blocked {
+            record_refusal(RefusalReason::Blocked);
+            return true;
+        }
+
+        false
+    }
 }
 
 impl Default for PathGuard {
     fn default() -> Self {
-        Self::new(&[], None)
+        Self::from_flags(&[], &[], None)
     }
+}
+
+/// The deprecation notice due when a caller still uses `--block-path` or
+/// `--block-file`, or `None` when neither is set.
+///
+/// A pure function rather than a log call inside the guard, so the notice is
+/// testable and the binary decides where it goes.
+pub fn legacy_block_flag_warning(
+    block_paths: &[String],
+    block_file: Option<&str>,
+) -> Option<String> {
+    if block_paths.is_empty() && block_file.is_none() {
+        return None;
+    }
+    Some(
+        "--block-path and --block-file are deprecated. The guard is an allowlist now: \
+         name the directories this server may reach with --allow-path, or with the \
+         FILEIO_MCP_ALLOW_PATHS environment variable. The block entries still apply \
+         on top of the allowlist. A later release refuses these flags."
+            .to_string(),
+    )
+}
+
+/// The allowlist roots as configured, before resolution.
+fn configured_roots(allow_paths: &[String]) -> Vec<String> {
+    if !allow_paths.is_empty() {
+        return allow_paths.to_vec();
+    }
+    if let Some(value) = std::env::var_os(ALLOW_PATHS_ENV) {
+        return parse_root_list(&value.to_string_lossy());
+    }
+    default_roots()
+}
+
+/// Split a `:`-separated root list. An entry that is empty or only spaces is
+/// dropped, so a trailing separator does not become a root.
+fn parse_root_list(value: &str) -> Vec<String> {
+    value
+        .split(':')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The built-in default allowlist.
+fn default_roots() -> Vec<String> {
+    let mut roots = vec![std::env::temp_dir().to_string_lossy().into_owned()];
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        for name in DEFAULT_HOME_ROOTS {
+            roots.push(home.join(name).to_string_lossy().into_owned());
+        }
+    }
+    roots
+}
+
+/// Resolve every root, dropping any the guard cannot identify.
+///
+/// A root kept as an unresolved string could match a path it does not name,
+/// so a root that cannot be resolved is dropped rather than trusted.
+fn resolve_roots<S: AsRef<str>>(roots: &[S]) -> Vec<PathBuf> {
+    let mut resolved = Vec::with_capacity(roots.len());
+    for root in roots {
+        let root = root.as_ref().trim();
+        if root.is_empty() {
+            continue;
+        }
+        match resolve(root) {
+            Some(path) => resolved.push(path),
+            // The reason and the outcome belong on this line; the root does
+            // not (D10 - a path is content, not an id, a count or a duration).
+            None => tracing::warn!(
+                outcome = "allow_root_dropped",
+                "an allowlist root could not be resolved; dropping it"
+            ),
+        }
+    }
+    if resolved.is_empty() {
+        tracing::warn!(
+            outcome = "allowlist_empty",
+            "the path allowlist is empty; every path is refused"
+        );
+    }
+    resolved
+}
+
+/// The built-in block entries, plus the deprecated flag entries.
+fn collect_blocks(block_paths: &[String], block_file: Option<&str>) -> Vec<BlockEntry> {
+    let mut entries = Vec::new();
+
+    for pattern in DEFAULT_BLOCKS {
+        add_block(&mut entries, pattern);
+    }
+    for pattern in block_paths {
+        add_block(&mut entries, pattern);
+    }
+
+    if let Some(file_path) = block_file {
+        // The block file itself is blocked, so its contents stay unreadable.
+        add_block(&mut entries, file_path);
+
+        // Read the resolved path, so the file the guard blocks and the file it
+        // reads are the same one.
+        let Some(resolved) = resolve(file_path) else {
+            tracing::warn!(
+                outcome = "block_file_not_loaded",
+                "the configured block-file path could not be resolved; \
+                 continuing without its entries"
+            );
+            return entries;
+        };
+
+        match std::fs::read_to_string(&resolved) {
+            Ok(contents) => {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    add_block(&mut entries, line);
+                }
+            }
+            // `outcome` names what the server does about it: it keeps running
+            // with the built-in blocks and any --block-path entries, just
+            // without this file's.
+            Err(e) => tracing::warn!(
+                reason = ?e.kind(),
+                outcome = "block_file_not_loaded",
+                "could not read the configured block-file; continuing without its entries"
+            ),
+        }
+    }
+
+    entries
+}
+
+/// Add one block pattern. A trailing `/` makes it a directory prefix.
+fn add_block(entries: &mut Vec<BlockEntry>, pattern: &str) {
+    // A `~` pattern with no HOME to expand would resolve against the working
+    // directory and block a path nobody named. Drop it instead.
+    if pattern.starts_with('~') && std::env::var_os("HOME").is_none() {
+        return;
+    }
+    let is_directory = pattern.ends_with('/');
+    let Some(resolved) = resolve(pattern) else {
+        tracing::warn!(
+            outcome = "block_entry_dropped",
+            "a block entry could not be resolved; dropping it"
+        );
+        return;
+    };
+    entries.push(if is_directory {
+        BlockEntry::Directory(resolved)
+    } else {
+        BlockEntry::File(resolved)
+    });
+}
+
+/// One step of a path, once `.` has been dropped.
+enum Step {
+    /// `..`
+    Parent,
+    /// An ordinary component.
+    Name(OsString),
+}
+
+/// Queue the steps of `path`, dropping `.`, the root and any prefix. The
+/// caller decides where the walk starts.
+fn queue_steps(queue: &mut VecDeque<Step>, path: &Path) {
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => queue.push_back(Step::Name(name.to_os_string())),
+            Component::ParentDir => queue.push_back(Step::Parent),
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+}
+
+/// Resolve `path` to an absolute path with no symlink, `.` or `..` left in
+/// it, or `None` when the guard cannot say what the path is.
+///
+/// A leading `~` and any `$VAR` expand first, the same way every operation
+/// expands them.
+///
+/// `std::fs::canonicalize` cannot do this job on its own, because a path the
+/// caller means to create does not exist yet. This walks the path one
+/// component at a time instead:
+///
+/// - `..` removes the last resolved component, and does nothing at `/`, as in
+///   the kernel. Resolving as we go is what makes this correct: `..` after a
+///   symlink pops the link's target, not the link's parent.
+/// - A symlink is replaced by its target, which is then resolved in turn. An
+///   absolute target restarts the walk at `/`.
+/// - A component that does not exist is kept as written. It cannot be a
+///   symlink, so nothing is missed.
+///
+/// Anything else - an unreadable parent directory, a link loop, a working
+/// directory that cannot be read, an expansion that fails - returns `None`,
+/// and the caller refuses.
+fn resolve(path: &str) -> Option<PathBuf> {
+    // `shellexpand::full`, and not `tilde`, because that is what every
+    // function under `src/operations` calls before it touches the filesystem.
+    // Expanding less than the operations do would let a caller name one path
+    // to the guard and a different one to the operation: `$HOME/.ssh/id_rsa`
+    // reads as a relative name to `tilde` and as an absolute path to `full`.
+    // An expansion that fails names no path the guard can identify, so it
+    // refuses.
+    let expanded = shellexpand::full(path).ok()?.into_owned();
+    let input = Path::new(&expanded);
+
+    let start = if input.is_absolute() {
+        PathBuf::from("/")
+    } else {
+        std::fs::canonicalize(std::env::current_dir().ok()?).ok()?
+    };
+    resolve_from(start, input)
+}
+
+/// Resolve the target of a symbolic link that will be created at
+/// `link_path`.
+///
+/// A relative target is resolved from the link's own directory, which is
+/// where the kernel resolves it from, and not from the process working
+/// directory.
+fn resolve_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
+    let expanded = shellexpand::full(target).ok()?.into_owned();
+    let input = Path::new(&expanded);
+    if input.is_absolute() {
+        return resolve_from(PathBuf::from("/"), input);
+    }
+    resolve_from(link_directory(link_path)?, input)
+}
+
+/// The directory a link at `link_path` sits in.
+///
+/// Take the parent first and resolve that, never the link path itself:
+/// [`resolve`] follows the final component, and the final component is the
+/// link, so resolving it would give the directory of the link's *target*.
+fn link_directory(link_path: &str) -> Option<PathBuf> {
+    let expanded = shellexpand::full(link_path).ok()?.into_owned();
+    let parent = Path::new(&expanded).parent()?;
+    resolve(parent.to_str()?)
+}
+
+/// Make a link target absolute and drop `.` and `..`, following no symlink.
+///
+/// A relative target is read from the directory the link sits in, which is
+/// the base the kernel would use.
+fn normalize_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
+    let expanded = shellexpand::full(target).ok()?.into_owned();
+    let input = Path::new(&expanded);
+
+    let mut normalized = if input.is_absolute() {
+        PathBuf::from("/")
+    } else {
+        link_directory(link_path)?
+    };
+
+    for component in input.components() {
+        match component {
+            Component::Normal(name) => normalized.push(name),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    Some(normalized)
+}
+
+/// Walk `input` from an already-resolved `resolved` base.
+fn resolve_from(mut resolved: PathBuf, input: &Path) -> Option<PathBuf> {
+    let mut pending: VecDeque<Step> = VecDeque::new();
+    queue_steps(&mut pending, input);
+
+    let mut hops = 0usize;
+    while let Some(step) = pending.pop_front() {
+        let name = match step {
+            Step::Parent => {
+                resolved.pop();
+                continue;
+            }
+            Step::Name(name) => name,
+        };
+
+        let candidate = resolved.join(&name);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                hops += 1;
+                if hops > MAX_LINK_HOPS {
+                    return None;
+                }
+                let target = std::fs::read_link(&candidate).ok()?;
+                if target.is_absolute() {
+                    resolved = PathBuf::from("/");
+                }
+                let mut target_steps = VecDeque::new();
+                queue_steps(&mut target_steps, &target);
+                while let Some(step) = target_steps.pop_back() {
+                    pending.push_front(step);
+                }
+            }
+            // Exists and is not a link, or does not exist yet. Either way the
+            // component is what it says it is.
+            Ok(_) => resolved = candidate,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => resolved = candidate,
+            // Most often EACCES on an unreadable parent: the guard cannot tell
+            // whether this component is a symlink, so it refuses.
+            Err(_) => return None,
+        }
+    }
+
+    Some(resolved)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
-    fn home() -> String {
-        std::env::var("HOME").unwrap()
+    /// The guard resolves before it compares, so `.` and `..` are gone by the
+    /// time the comparison happens.
+    #[test]
+    fn resolve_normalizes_dot_and_parent() {
+        let root = TempDir::new().expect("a temporary root");
+        let nested = root.path().join("a").join("b");
+        std::fs::create_dir_all(&nested).expect("create the nested directories");
+
+        let awkward = format!("{}/a/./b/../b/c.txt", root.path().display());
+        let expected = std::fs::canonicalize(root.path())
+            .expect("canonical root")
+            .join("a")
+            .join("b")
+            .join("c.txt");
+
+        assert_eq!(resolve(&awkward), Some(expected));
     }
 
+    /// `..` at `/` stays at `/`, as in the kernel, rather than underflowing.
     #[test]
-    fn denies_ssh_directory() {
-        let guard = PathGuard::default();
-        assert!(guard.is_denied(&format!("{}/.ssh/id_ed25519", home())));
-        assert!(guard.is_denied(&format!("{}/.ssh/known_hosts", home())));
-        assert!(guard.is_denied(&format!("{}/.ssh/config", home())));
+    fn resolve_stops_at_the_filesystem_root() {
+        assert_eq!(resolve("/../../../etc"), Some(PathBuf::from("/etc")));
     }
 
+    /// A component that does not exist is kept as written. A write names a
+    /// path before it exists, and the guard still has to decide about it.
     #[test]
-    fn denies_aws_credentials() {
-        let guard = PathGuard::default();
-        assert!(guard.is_denied(&format!("{}/.aws/credentials", home())));
-        assert!(guard.is_denied(&format!("{}/.aws/config", home())));
+    fn resolve_keeps_a_component_that_does_not_exist() {
+        let root = TempDir::new().expect("a temporary root");
+        let target = root.path().join("not-yet").join("file.txt");
+        let expected = std::fs::canonicalize(root.path())
+            .expect("canonical root")
+            .join("not-yet")
+            .join("file.txt");
+
+        assert_eq!(resolve(&target.to_string_lossy()), Some(expected));
     }
 
+    /// A relative symlink target resolves against the link's own directory,
+    /// not against the working directory.
     #[test]
-    fn denies_secrets_toml() {
-        let guard = PathGuard::default();
-        assert!(guard.is_denied(&format!(
-            "{}/.config/desktop-assistant/secrets.toml",
-            home()
-        )));
+    fn resolve_follows_a_relative_symlink_target() {
+        let root = TempDir::new().expect("a temporary root");
+        let real = root.path().join("real.txt");
+        std::fs::write(&real, "contents").expect("write the target file");
+        let link = root.path().join("link.txt");
+        std::os::unix::fs::symlink("real.txt", &link).expect("create the relative symlink");
+
+        let expected = std::fs::canonicalize(&real).expect("canonical target");
+        assert_eq!(resolve(&link.to_string_lossy()), Some(expected));
     }
 
+    /// A link loop has no answer, so the guard gives up and the caller
+    /// refuses the path.
     #[test]
-    fn denies_etc_shadow() {
-        let guard = PathGuard::default();
-        assert!(guard.is_denied("/etc/shadow"));
+    fn resolve_gives_up_on_a_symlink_loop() {
+        let root = TempDir::new().expect("a temporary root");
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        std::os::unix::fs::symlink(&second, &first).expect("create the first link");
+        std::os::unix::fs::symlink(&first, &second).expect("create the second link");
+
+        assert_eq!(resolve(&first.to_string_lossy()), None);
     }
 
+    /// A `~` only expands at the front of a path. A `~` in the middle is an
+    /// ordinary directory name. A `$VAR` expands wherever it appears, because
+    /// that is what the operations do.
     #[test]
-    fn allows_normal_paths() {
-        let guard = PathGuard::default();
-        assert!(!guard.is_denied("/tmp/test.txt"));
-        assert!(!guard.is_denied(&format!("{}/projects/foo.rs", home())));
-        assert!(!guard.is_denied(&format!("{}/.config/some-app/config.toml", home())));
-    }
-
-    #[test]
-    fn denies_exact_file_match() {
-        let guard = PathGuard::default();
-        assert!(guard.is_denied(&format!("{}/.netrc", home())));
-        assert!(guard.is_denied(&format!("{}/.npmrc", home())));
-    }
-
-    #[test]
-    fn extra_paths_are_denied() {
-        let guard = PathGuard::new(
-            &["/tmp/secret-dir/".into(), "/tmp/secret-file.txt".into()],
-            None,
-        );
-        assert!(guard.is_denied("/tmp/secret-dir/foo.txt"));
-        assert!(guard.is_denied("/tmp/secret-file.txt"));
-        assert!(!guard.is_denied("/tmp/other.txt"));
-    }
-
-    #[test]
-    fn blocklist_file_loaded_and_self_denied() {
-        let dir = std::env::temp_dir().join("fileio_blocklist_test");
-        let _ = std::fs::create_dir_all(&dir);
-        let blocklist = dir.join("blocklist.txt");
-
-        std::fs::write(
-            &blocklist,
-            "# comment\n/tmp/blocked-by-file/\n/tmp/blocked-file.txt\n",
-        )
-        .unwrap();
-
-        let guard = PathGuard::new(&[], Some(blocklist.to_str().unwrap()));
-
-        // Entries from the blocklist file
-        assert!(guard.is_denied("/tmp/blocked-by-file/secret.key"));
-        assert!(guard.is_denied("/tmp/blocked-file.txt"));
-
-        // The blocklist file itself is denied
-        assert!(guard.is_denied(blocklist.to_str().unwrap()));
-
-        // Other paths still allowed
-        assert!(!guard.is_denied("/tmp/other.txt"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn symlink_to_denied_path_is_denied() {
-        let dir = std::env::temp_dir().join("fileio_symlink_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // Create a real file in ~/.ssh (if it exists) or skip. This stays
-        // `eprintln!` rather than a `tracing` macro: it is a test-runner
-        // message about the test environment (no subscriber is installed in
-        // a unit-test process, so a tracing event here would go nowhere),
-        // not a server diagnostic. It names no path beyond the fixed
-        // `~/.ssh`, so D10 does not apply to it.
-        let ssh_dir = PathBuf::from(home()).join(".ssh");
-        if !ssh_dir.exists() {
-            eprintln!("SKIP: ~/.ssh does not exist");
+    fn resolve_expands_a_leading_tilde_and_environment_variables() {
+        let Some(home) = std::env::var_os("HOME") else {
+            eprintln!("SKIP resolve_expands_a_leading_tilde_and_environment_variables: no HOME");
             return;
-        }
+        };
+        let home = PathBuf::from(home);
+        let expected_home = resolve(&home.join("does-not-exist-fileio-test").to_string_lossy());
 
-        // Create a symlink to ~/.ssh
-        let link = dir.join("sneaky_link");
-        std::os::unix::fs::symlink(&ssh_dir, &link).unwrap();
+        assert_eq!(resolve("~/does-not-exist-fileio-test"), expected_home);
+        assert_eq!(resolve("$HOME/does-not-exist-fileio-test"), expected_home);
+        assert_eq!(resolve("${HOME}/does-not-exist-fileio-test"), expected_home);
 
-        let guard = PathGuard::default();
-        let link_target = format!("{}/known_hosts", link.display());
-        assert!(
-            guard.is_denied(&link_target),
-            "symlink to ~/.ssh should be denied"
+        // An undefined variable names no path the guard can identify.
+        assert_eq!(resolve("$FILEIO_MCP_UNDEFINED_TEST_VAR/x"), None);
+
+        let root = TempDir::new().expect("a temporary root");
+        let mid = root.path().join("~tilde").join("file.txt");
+        let expected = std::fs::canonicalize(root.path())
+            .expect("canonical root")
+            .join("~tilde")
+            .join("file.txt");
+        assert_eq!(resolve(&mid.to_string_lossy()), Some(expected));
+    }
+
+    /// A trailing separator, or a stray space, must not become a root that
+    /// resolves to the working directory.
+    #[test]
+    fn parse_root_list_drops_empty_entries() {
+        assert_eq!(
+            parse_root_list("/one: /two :"),
+            vec!["/one".to_string(), "/two".to_string()]
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(parse_root_list("").is_empty());
+        assert!(parse_root_list(":::").is_empty());
     }
 
+    /// The default set has to cover the system temporary directory, because
+    /// that is where a caller puts scratch work.
     #[test]
-    fn canonicalize_best_effort_works_for_nonexistent() {
-        // /tmp exists, so /tmp/nonexistent/deep/path should canonicalize
-        // the /tmp part and append the rest
-        let result = canonicalize_best_effort("/tmp/nonexistent_test_xyz/deep/path.txt");
-        assert!(result.to_str().unwrap().contains("nonexistent_test_xyz"));
-        assert!(result.to_str().unwrap().contains("deep"));
-    }
-
-    #[test]
-    fn tilde_expansion_in_deny_list() {
-        let guard = PathGuard::new(&["~/custom-secret.txt".into()], None);
-        assert!(guard.is_denied(&format!("{}/custom-secret.txt", home())));
-    }
-
-    /// Regression: an adversarial caller passing a tilde-prefixed *input* to
-    /// `is_denied` must still be denied. Without input-side expansion, the
-    /// downstream operations crate calls `shellexpand::full` after the guard
-    /// check and accesses the real file (issue #2).
-    #[test]
-    fn denies_tilde_prefixed_input() {
-        let guard = PathGuard::default();
+    fn default_roots_cover_the_system_temporary_directory() {
+        let guard = PathGuard::from_flags(&[], &[], None);
+        let scratch = std::env::temp_dir().join("fileio-default-root-check.txt");
         assert!(
-            guard.is_denied("~/.ssh/id_ed25519"),
-            "tilde-prefixed inputs must be expanded before matching"
-        );
-        assert!(guard.is_denied("~/.aws/credentials"));
-        assert!(guard.is_denied("~/.config/desktop-assistant/secrets.toml"));
-        assert!(guard.is_denied("~/.netrc"));
-    }
-
-    /// Regression: an extra-path pattern set via `~/...` must match both the
-    /// tilde-prefixed input form *and* the absolute form.
-    #[test]
-    fn pattern_input_symmetry_for_tilde() {
-        let guard = PathGuard::new(&["~/private/".into()], None);
-        assert!(
-            guard.is_denied("~/private/file.txt"),
-            "tilde input must match tilde pattern"
-        );
-        assert!(
-            guard.is_denied(&format!("{}/private/file.txt", home())),
-            "absolute input must match tilde pattern"
+            !guard.refuses(&scratch.to_string_lossy()),
+            "the default allowlist must cover the system temporary directory"
         );
     }
 
-    /// Allowed tilde-prefixed inputs stay allowed.
+    /// A block file names more entries, and the file itself stays unreadable
+    /// so the list cannot be read back.
     #[test]
-    fn allows_tilde_prefixed_safe_paths() {
-        let guard = PathGuard::default();
-        assert!(!guard.is_denied("~/projects/foo.rs"));
-        assert!(!guard.is_denied("~/Documents/report.md"));
-    }
+    fn block_file_entries_and_the_file_itself_are_blocked() {
+        let root = TempDir::new().expect("a temporary root");
+        let blocked_dir = root.path().join("blocked");
+        std::fs::create_dir_all(&blocked_dir).expect("create the blocked directory");
+        let list = root.path().join("blocks.txt");
+        std::fs::write(&list, format!("# a comment\n{}/\n", blocked_dir.display()))
+            .expect("write the block file");
 
-    /// `~` mid-path is not expanded by `shellexpand::tilde` — it only expands
-    /// a leading `~`. Verify a pattern like `/tmp/~foo/` is stored verbatim,
-    /// not silently rewritten to `/tmp/<home>foo/` (which the previous
-    /// `replace('~', home)` implementation would have done).
-    #[test]
-    fn mid_path_tilde_in_pattern_is_literal() {
-        let guard = PathGuard::new(&["/tmp/~tilde-dir/".into()], None);
-        assert!(guard.is_denied("/tmp/~tilde-dir/file.txt"));
-        // The misexpansion that would have happened with the old code:
-        let misexpanded = format!("/tmp/{}foo/", home());
-        assert!(!guard.is_denied(&misexpanded));
+        let roots = [root.path().to_string_lossy().into_owned()];
+        let guard = PathGuard::with_roots_and_blocks(&roots, &[], list.to_str());
+
+        assert!(
+            guard.refuses(&blocked_dir.join("secret.txt").to_string_lossy()),
+            "an entry from the block file must be refused"
+        );
+        assert!(
+            guard.refuses(&list.to_string_lossy()),
+            "the block file itself must be refused"
+        );
+        assert!(
+            !guard.refuses(&root.path().join("notes.txt").to_string_lossy()),
+            "the rest of the root must stay reachable"
+        );
     }
 
     /// Sum, across every label combination, how many times
@@ -432,49 +710,45 @@ mod tests {
     /// than an exact read: this binary's other unit tests share the same
     /// process-global registry (mcp-core's re-exported facade has no
     /// per-test handle to inject), and several of them run concurrently and
-    /// also deny paths. Only ever-increasing, so a `>=` comparison against a
-    /// known number of denials this test caused is exact enough to prove
+    /// also refuse paths. Only ever-increasing, so a `>=` comparison against
+    /// a known number of refusals this test caused is exact enough to prove
     /// the wiring without being flaky under `cargo test`'s default
     /// parallelism.
-    fn guard_rejection_total() -> u64 {
+    fn guard_refusal_total() -> u64 {
         mcp_core::telemetry::metrics::global()
             .snapshot()
             .counters
             .iter()
-            .filter(|c| c.name == "fileio.guard.rejections")
+            .filter(|c| c.name == GUARD_REJECTIONS_METRIC)
             .map(|c| c.total)
             .sum()
     }
 
-    /// Acceptance: a denied path — of both deny-list shapes, an exact file
-    /// and a directory prefix — increments the bounded `reason`-labelled
-    /// counter so an operator can see the guard working without the model
-    /// ever finding out (rejections stay invisible on the wire; this is the
-    /// one place they become observable). An allowed path must not move it.
+    /// Acceptance: a refusal increments the bounded `reason`-labelled counter,
+    /// so an operator can see the guard working without the caller ever
+    /// finding out. A permitted path must not move it.
     #[test]
-    fn guard_rejection_metric_counts_denials_by_reason() {
-        let guard = PathGuard::new(
-            &[
-                "/tmp/fileio-metric-test-dir/".into(),
-                "/tmp/fileio-metric-test-file.txt".into(),
-            ],
-            None,
-        );
+    fn guard_refusal_metric_counts_refusals() {
+        let root = TempDir::new().expect("a temporary root");
+        let outside = TempDir::new().expect("a directory outside the root");
+        let blocked = root.path().join("blocked");
+        std::fs::create_dir_all(&blocked).expect("create the blocked directory");
 
-        let before = guard_rejection_total();
+        let roots = [root.path().to_string_lossy().into_owned()];
+        let guard =
+            PathGuard::with_roots_and_blocks(&roots, &[format!("{}/", blocked.display())], None);
 
-        // One directory-prefix denial, one exact-file denial, one allowed
-        // path that must not count.
-        assert!(guard.is_denied("/tmp/fileio-metric-test-dir/secret.txt"));
-        assert!(guard.is_denied("/tmp/fileio-metric-test-file.txt"));
-        assert!(!guard.is_denied("/tmp/fileio-metric-test-allowed.txt"));
+        let before = guard_refusal_total();
 
-        let after = guard_rejection_total();
+        assert!(guard.refuses(&outside.path().join("a.txt").to_string_lossy()));
+        assert!(guard.refuses(&blocked.join("b.txt").to_string_lossy()));
+        assert!(!guard.refuses(&root.path().join("c.txt").to_string_lossy()));
+
+        let after = guard_refusal_total();
         assert!(
             after >= before + 2,
-            "expected the guard-rejection counter to rise by at least 2 \
-             (one exact-file denial, one directory-prefix denial), \
-             before={before} after={after}"
+            "expected the refusal counter to rise by at least 2 \
+             (one outside the allowlist, one blocked), before={before} after={after}"
         );
     }
 }
