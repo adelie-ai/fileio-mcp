@@ -1,0 +1,545 @@
+#![deny(warnings)]
+
+//! Acceptance tests for the path allowlist (issues #20 and #1).
+//!
+//! The guard permits a small set of roots and refuses everything else, on
+//! arguments and on results alike. These tests drive the public tool
+//! dispatch, so they prove the wiring in `tools.rs` and the decision in
+//! `path_guard.rs` together.
+//!
+//! Every test builds its own temporary root and names it as the only
+//! allowlist entry, so no test can reach a real home directory whatever the
+//! code under test does. Refusals get most of the attention here: a guard
+//! that never fires under test is a guard nobody has tested.
+
+use std::fs;
+use std::path::Path;
+
+use fileio_mcp::path_guard::{PathGuard, legacy_block_flag_warning};
+use fileio_mcp::tools::ToolRegistry;
+use serde_json::{Value, json};
+use tempfile::TempDir;
+
+/// A guard whose only allowlist root is `root`.
+fn guard_rooted_at(root: &Path) -> PathGuard {
+    PathGuard::with_roots(&[root.to_string_lossy().into_owned()])
+}
+
+/// A registry that may reach `root` and nothing else.
+fn registry_rooted_at(root: &Path) -> ToolRegistry {
+    ToolRegistry::with_guard(guard_rooted_at(root))
+}
+
+/// The tool's response body as text. Every tool returns a single text
+/// content block, whether the body is plain text or serialized JSON.
+fn body_text(response: &Value) -> String {
+    response["content"][0]["text"]
+        .as_str()
+        .expect("a tool response carries a text content block")
+        .to_string()
+}
+
+/// Assert a call was refused the way an absent file is reported.
+#[track_caller]
+fn assert_reported_not_found(result: fileio_mcp::error::Result<Value>, what: &str) {
+    match result {
+        Ok(response) => panic!("{what} must be refused, got a result: {response}"),
+        Err(error) => {
+            let message = error.to_string().to_lowercase();
+            assert!(
+                message.contains("not found"),
+                "{what} must be refused as 'not found', got: {message}"
+            );
+        }
+    }
+}
+
+/// A path string under `dir`.
+fn at(dir: &Path, name: &str) -> String {
+    dir.join(name).to_string_lossy().into_owned()
+}
+
+// ---------------------------------------------------------------------
+// Arguments
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn read_outside_the_allowlist_reports_not_found() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let secret = outside.path().join("outside-secret.txt");
+    fs::write(&secret, "real contents").expect("write the outside file");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_read_lines",
+            &json!({"path": secret.to_string_lossy()}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a read outside every allowlist root");
+}
+
+#[tokio::test]
+async fn write_outside_the_allowlist_reports_not_found() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let target = outside.path().join("outside-new.txt");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_write_file",
+            &json!({"path": target.to_string_lossy(), "content": "should never land"}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a write outside every allowlist root");
+    assert!(!target.exists(), "a refused write must not create the file");
+}
+
+#[tokio::test]
+async fn symlink_target_outside_the_allowlist_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let secret = outside.path().join("outside-secret.txt");
+    fs::write(&secret, "real contents").expect("write the outside file");
+
+    let link = root.path().join("escape-link.txt");
+    std::os::unix::fs::symlink(&secret, &link).expect("create the escaping symlink");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_read_lines",
+            &json!({"path": link.to_string_lossy()}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a read through a symlink that leaves the root");
+}
+
+#[tokio::test]
+async fn path_traversal_out_of_an_allowed_root_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let secret = outside.path().join("outside-secret.txt");
+    fs::write(&secret, "real contents").expect("write the outside file");
+
+    let outside_name = outside
+        .path()
+        .file_name()
+        .expect("the outside root has a name")
+        .to_string_lossy()
+        .into_owned();
+    // Both temporary roots are siblings, so `..` from one reaches the other.
+    let traversal = format!(
+        "{}/../{}/outside-secret.txt",
+        root.path().display(),
+        outside_name
+    );
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool("fileio_read_lines", &json!({"path": traversal}))
+        .await;
+
+    assert_reported_not_found(result, "a read that walks out of the root with '..'");
+}
+
+#[tokio::test]
+async fn edit_file_outside_the_allowlist_reports_not_found_and_changes_nothing() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let target = outside.path().join("outside-secret.txt");
+    fs::write(&target, "hello world").expect("write the outside file");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_edit_file",
+            &json!({
+                "path": target.to_string_lossy(),
+                "edits": [{"op": "replace", "search": "world", "text": "rust"}],
+            }),
+        )
+        .await;
+
+    assert_reported_not_found(result, "an edit outside every allowlist root");
+    assert_eq!(
+        fs::read_to_string(&target).expect("read the outside file back"),
+        "hello world",
+        "a refused edit must leave the file alone"
+    );
+}
+
+#[tokio::test]
+async fn copy_from_outside_the_allowlist_reports_not_found_and_copies_nothing() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let source = outside.path().join("outside-secret.txt");
+    fs::write(&source, "real contents").expect("write the outside file");
+    let destination = root.path().join("copied.txt");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_copy",
+            &json!({
+                "source": [source.to_string_lossy()],
+                "destination": destination.to_string_lossy(),
+            }),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a copy whose source is outside every root");
+    assert!(
+        !destination.exists(),
+        "a refused copy must not create the destination"
+    );
+}
+
+#[tokio::test]
+async fn stat_refuses_the_call_when_one_path_is_outside_the_allowlist() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let inside = root.path().join("inside-visible.txt");
+    fs::write(&inside, "visible").expect("write the inside file");
+    let secret = outside.path().join("outside-secret.txt");
+    fs::write(&secret, "secret").expect("write the outside file");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_stat",
+            &json!({"path": [inside.to_string_lossy(), secret.to_string_lossy()]}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a stat with one path outside every root");
+}
+
+#[tokio::test]
+async fn create_temporary_outside_the_allowlist_reports_not_found_and_creates_nothing() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+
+    let registry = registry_rooted_at(root.path());
+    let template = at(outside.path(), "probe-XXXXXX");
+    let result = registry
+        .execute_tool(
+            "fileio_create_temporary",
+            &json!({"type": "file", "template": template}),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a temporary file outside every root");
+    let left_behind: Vec<_> = fs::read_dir(outside.path())
+        .expect("read the outside root")
+        .map(|entry| entry.expect("an outside entry").path())
+        .collect();
+    assert!(
+        left_behind.is_empty(),
+        "a refused temporary must create nothing, found: {left_behind:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------
+
+/// Set up an allowed root that contains one ordinary file, one symlink to a
+/// file outside the root, and one symlink to the outside directory itself.
+/// Returns the allowed root and the outside root, in that order.
+fn root_with_escapes(needle: &str) -> (TempDir, TempDir) {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+
+    fs::write(root.path().join("inside-visible.txt"), needle).expect("write the inside file");
+    fs::write(outside.path().join("outside-secret.txt"), needle).expect("write the outside file");
+
+    std::os::unix::fs::symlink(
+        outside.path().join("outside-secret.txt"),
+        root.path().join("escape-link.txt"),
+    )
+    .expect("create the escaping file symlink");
+    std::os::unix::fs::symlink(outside.path(), root.path().join("escape-dir"))
+        .expect("create the escaping directory symlink");
+
+    (root, outside)
+}
+
+#[track_caller]
+fn assert_result_stays_inside(text: &str, tool: &str) {
+    assert!(
+        text.contains("inside-visible.txt"),
+        "{tool} must still report the entry inside the root, got: {text}"
+    );
+    assert!(
+        !text.contains("escape-link"),
+        "{tool} must omit a symlink that leaves the root, got: {text}"
+    );
+    assert!(
+        !text.contains("outside-secret"),
+        "{tool} must omit every path outside the root, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn list_directory_omits_entries_outside_the_allowlist() {
+    let (root, _outside) = root_with_escapes("NEEDLE");
+
+    let registry = registry_rooted_at(root.path());
+    let response = registry
+        .execute_tool(
+            "fileio_list_directory",
+            &json!({"path": root.path().to_string_lossy(), "recursive": true}),
+        )
+        .await
+        .expect("listing the allowed root must succeed");
+
+    assert_result_stays_inside(&body_text(&response), "fileio_list_directory");
+}
+
+#[tokio::test]
+async fn find_files_omits_matches_outside_the_allowlist() {
+    let (root, _outside) = root_with_escapes("NEEDLE");
+
+    let registry = registry_rooted_at(root.path());
+    let response = registry
+        .execute_tool(
+            "fileio_find_files",
+            &json!({"pattern": "*", "root": root.path().to_string_lossy()}),
+        )
+        .await
+        .expect("finding files under the allowed root must succeed");
+
+    assert_result_stays_inside(&body_text(&response), "fileio_find_files");
+}
+
+#[tokio::test]
+async fn find_in_files_omits_matches_outside_the_allowlist() {
+    let (root, _outside) = root_with_escapes("NEEDLE");
+
+    let registry = registry_rooted_at(root.path());
+    let response = registry
+        .execute_tool(
+            "fileio_find_in_files",
+            &json!({"pattern": "NEEDLE", "path": root.path().to_string_lossy()}),
+        )
+        .await
+        .expect("searching under the allowed root must succeed");
+
+    assert_result_stays_inside(&body_text(&response), "fileio_find_in_files");
+}
+
+#[tokio::test]
+async fn blocked_subtree_inside_an_allowed_root_is_omitted_from_listings() {
+    let root = TempDir::new().expect("allowed root");
+    let blocked = root.path().join("blocked");
+    fs::create_dir_all(&blocked).expect("create the blocked subtree");
+    fs::write(root.path().join("inside-visible.txt"), "NEEDLE").expect("write the inside file");
+    fs::write(blocked.join("outside-secret.txt"), "NEEDLE").expect("write the blocked file");
+
+    let guard = PathGuard::with_roots_and_blocks(
+        &[root.path().to_string_lossy().into_owned()],
+        &[format!("{}/", blocked.display())],
+        None,
+    );
+    let registry = ToolRegistry::with_guard(guard);
+
+    let listed = registry
+        .execute_tool(
+            "fileio_list_directory",
+            &json!({"path": root.path().to_string_lossy(), "recursive": true}),
+        )
+        .await
+        .expect("listing the allowed root must succeed");
+    assert_result_stays_inside(&body_text(&listed), "fileio_list_directory");
+
+    let found = registry
+        .execute_tool(
+            "fileio_find_files",
+            &json!({"pattern": "*", "root": root.path().to_string_lossy()}),
+        )
+        .await
+        .expect("finding files under the allowed root must succeed");
+    assert_result_stays_inside(&body_text(&found), "fileio_find_files");
+
+    let grepped = registry
+        .execute_tool(
+            "fileio_find_in_files",
+            &json!({"pattern": "NEEDLE", "path": root.path().to_string_lossy()}),
+        )
+        .await
+        .expect("searching under the allowed root must succeed");
+    assert_result_stays_inside(&body_text(&grepped), "fileio_find_in_files");
+}
+
+// ---------------------------------------------------------------------
+// The guard's own decision
+// ---------------------------------------------------------------------
+
+#[test]
+fn path_outside_every_root_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let guard = guard_rooted_at(root.path());
+
+    assert!(
+        !guard.refuses(&at(root.path(), "file.txt")),
+        "a path inside the root must be permitted"
+    );
+    assert!(
+        guard.refuses(&at(outside.path(), "file.txt")),
+        "a path outside every root must be refused"
+    );
+    assert!(
+        guard.refuses("/etc/shadow"),
+        "a system path outside every root must be refused"
+    );
+}
+
+#[test]
+fn sibling_directory_sharing_a_root_name_prefix_is_refused() {
+    let parent = TempDir::new().expect("parent of both roots");
+    let root = parent.path().join("workspace");
+    let sibling = parent.path().join("workspace-private");
+    fs::create_dir_all(&root).expect("create the allowed root");
+    fs::create_dir_all(&sibling).expect("create the sibling");
+
+    let guard = guard_rooted_at(&root);
+
+    assert!(
+        !guard.refuses(&at(&root, "notes.txt")),
+        "a path inside the root must be permitted"
+    );
+    assert!(
+        guard.refuses(&at(&sibling, "notes.txt")),
+        "a sibling that only shares a name prefix must be refused"
+    );
+}
+
+#[test]
+fn empty_allowlist_refuses_every_path() {
+    let root = TempDir::new().expect("a directory that is not allowed");
+    let empty: [String; 0] = [];
+    let guard = PathGuard::with_roots(&empty);
+
+    assert!(
+        guard.refuses(&at(root.path(), "file.txt")),
+        "an empty allowlist must refuse every path"
+    );
+    assert!(guard.refuses("/"), "an empty allowlist must refuse '/'");
+}
+
+#[test]
+fn path_under_an_unreadable_directory_is_refused() {
+    if nix::unistd::geteuid().is_root() {
+        eprintln!("SKIP path_under_an_unreadable_directory_is_refused: root ignores file modes");
+        return;
+    }
+
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().expect("allowed root");
+    let locked = root.path().join("locked");
+    fs::create_dir_all(&locked).expect("create the locked directory");
+    let hidden = locked.join("hidden.txt");
+    fs::write(&hidden, "contents").expect("write inside the locked directory");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+        .expect("make the directory unreadable");
+
+    let guard = guard_rooted_at(root.path());
+    let refused = guard.refuses(&hidden.to_string_lossy());
+
+    // Restore the mode so the temporary directory can be removed.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700))
+        .expect("restore the directory mode");
+
+    assert!(
+        refused,
+        "a path the guard cannot resolve must be refused, even inside a root"
+    );
+}
+
+#[test]
+fn legacy_block_path_flag_is_accepted_with_a_deprecation_warning() {
+    let root = TempDir::new().expect("allowed root");
+    let blocked = root.path().join("blocked");
+    fs::create_dir_all(&blocked).expect("create the blocked subtree");
+
+    let block_paths = vec![format!("{}/", blocked.display())];
+    let warning = legacy_block_flag_warning(&block_paths, None)
+        .expect("using --block-path must produce a deprecation warning");
+    assert!(
+        warning.to_lowercase().contains("deprecated"),
+        "the warning must say the flag is deprecated, got: {warning}"
+    );
+    assert!(
+        warning.contains("--allow-path"),
+        "the warning must name the replacement flag, got: {warning}"
+    );
+    assert!(
+        legacy_block_flag_warning(&[], None).is_none(),
+        "no warning is due when neither legacy flag is used"
+    );
+
+    let guard = PathGuard::with_roots_and_blocks(
+        &[root.path().to_string_lossy().into_owned()],
+        &block_paths,
+        None,
+    );
+    assert!(
+        guard.refuses(&at(&blocked, "secret.txt")),
+        "a legacy --block-path entry must still be refused inside an allowed root"
+    );
+    assert!(
+        !guard.refuses(&at(root.path(), "notes.txt")),
+        "the rest of the allowed root must stay reachable"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Positive control
+// ---------------------------------------------------------------------
+
+/// Without this, every refusal test above would also pass for a guard that
+/// refuses everything.
+#[tokio::test]
+async fn paths_inside_the_allowlist_are_reachable() {
+    let root = TempDir::new().expect("allowed root");
+    let target = root.path().join("notes.txt");
+    let registry = registry_rooted_at(root.path());
+
+    registry
+        .execute_tool(
+            "fileio_write_file",
+            &json!({"path": target.to_string_lossy(), "content": "hello\n"}),
+        )
+        .await
+        .expect("a write inside the root must succeed");
+    assert_eq!(
+        fs::read_to_string(&target).expect("read the written file"),
+        "hello\n"
+    );
+
+    let read = registry
+        .execute_tool(
+            "fileio_read_lines",
+            &json!({"path": target.to_string_lossy()}),
+        )
+        .await
+        .expect("a read inside the root must succeed");
+    assert!(body_text(&read).contains("hello"));
+
+    let listed = registry
+        .execute_tool(
+            "fileio_list_directory",
+            &json!({"path": root.path().to_string_lossy()}),
+        )
+        .await
+        .expect("a listing inside the root must succeed");
+    assert!(body_text(&listed).contains("notes.txt"));
+}

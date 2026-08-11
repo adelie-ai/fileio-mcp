@@ -196,6 +196,45 @@ impl PathGuard {
             .copied()
             .collect()
     }
+
+    /// Build a guard whose allowlist is exactly `roots`.
+    ///
+    /// Not yet implemented: the allowlist is not consulted.
+    pub fn with_roots<S: AsRef<str>>(_roots: &[S]) -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Build a guard whose allowlist is exactly `roots`, minus the legacy
+    /// `--block-path` / `--block-file` entries.
+    ///
+    /// Not yet implemented: the allowlist is not consulted.
+    pub fn with_roots_and_blocks<S: AsRef<str>>(
+        _roots: &[S],
+        block_paths: &[String],
+        block_file: Option<&str>,
+    ) -> Self {
+        Self::new(block_paths, block_file)
+    }
+
+    /// Whether the guard refuses `path`.
+    ///
+    /// Not yet implemented: nothing is refused.
+    pub fn refuses(&self, _path: &str) -> bool {
+        false
+    }
+}
+
+/// The deprecation notice due when a caller still uses `--block-path` or
+/// `--block-file`, or `None` when neither is set.
+///
+/// Not yet implemented: no notice is produced.
+pub fn legacy_block_flag_warning(
+    _block_paths: &[String],
+    _block_file: Option<&str>,
+) -> Option<String> {
+    None
 }
 
 /// Canonicalize a path, falling back to best-effort if the path doesn't exist.
