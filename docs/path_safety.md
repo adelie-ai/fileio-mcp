@@ -20,7 +20,8 @@ subtree the operator subtracted, is enough to do it.
 The first source that gives a non-empty set wins:
 
 1. `--allow-path <path>` on the command line. Repeat the flag for more roots.
-2. `FILEIO_MCP_ALLOW_PATHS`, a `:`-separated list of roots.
+2. `FILEIO_MCP_ALLOW_PATHS`, a `:`-separated list of roots. A root whose own
+   name contains `:` cannot be named this way; use `--allow-path` for it.
 3. The built-in default set.
 
 The built-in default set is:
