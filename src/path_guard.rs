@@ -35,9 +35,14 @@ pub const ALLOW_PATHS_ENV: &str = "FILEIO_MCP_ALLOW_PATHS";
 /// the work needs with `--allow-path`.
 const DEFAULT_HOME_ROOTS: &[&str] = &["Documents", "Downloads", "Desktop", "Projects"];
 
-/// Sensitive paths that stay unreachable even when an operator allows a root
-/// wide enough to contain them. Entries ending with `/` are directory
-/// prefixes.
+/// Sensitive paths subtracted from the allowlist, for the case where an
+/// operator allows a root wide enough to contain one of them. Entries ending
+/// with `/` are directory prefixes.
+///
+/// This is a path rule, so it holds against a path. It does not hold against
+/// a hard link made outside this server: a second name inside an allowed root
+/// reaches a blocked file's content and mode, and no path test can see the
+/// difference. See `docs/path_safety.md` and issue #27.
 const DEFAULT_BLOCKS: &[&str] = &[
     "~/.ssh/",
     "~/.gnupg/",
@@ -465,9 +470,27 @@ fn resolve_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
     if input.is_absolute() {
         return resolve_from(PathBuf::from("/"), input);
     }
+    // `resolve` follows the final component, so this is the directory of the
+    // link's target whenever `link_path` already exists as a link, rather
+    // than the directory the new link will sit in. It is the wrong base, and
+    // it is safe only because `symlink` refuses to replace an existing entry:
+    // when the base is wrong, no link is created. Anything that lets this
+    // server replace a link has to switch this to `link_directory`, the way
+    // `normalize_link_target` does.
     let link = resolve(link_path)?;
     let base = link.parent()?.to_path_buf();
     resolve_from(base, input)
+}
+
+/// The directory a link at `link_path` sits in.
+///
+/// Take the parent first and resolve that, never the link path itself:
+/// [`resolve`] follows the final component, and the final component is the
+/// link, so resolving it would give the directory of the link's *target*.
+fn link_directory(link_path: &str) -> Option<PathBuf> {
+    let expanded = shellexpand::full(link_path).ok()?.into_owned();
+    let parent = Path::new(&expanded).parent()?;
+    resolve(parent.to_str()?)
 }
 
 /// Make a link target absolute and drop `.` and `..`, following no symlink.
@@ -481,7 +504,7 @@ fn normalize_link_target(link_path: &str, target: &str) -> Option<PathBuf> {
     let mut normalized = if input.is_absolute() {
         PathBuf::from("/")
     } else {
-        resolve(link_path)?.parent()?.to_path_buf()
+        link_directory(link_path)?
     };
 
     for component in input.components() {

@@ -95,6 +95,13 @@ directory handle held across the check, and acting on that handle instead of on
 the path. That is a rewrite of every operation under `src/operations`, tracked
 as issue #26.
 
+A related weakness has no race in it at all. The guard resolves a path and then
+returns a boolean, throwing the resolved path away, so the operation re-expands
+the same string and the kernel resolves it a second time. The two agree by
+convention rather than by construction, and this change set had to fix four
+places where they had already parted. Passing the guard's own resolved path to
+the operations is tracked as issue #28.
+
 The exposure is small for the deployment this server targets. It runs as the
 local user and serves that user's own agent. An attacker who can create a
 symlink inside an allowed root at the right moment already has write access as
@@ -110,8 +117,14 @@ Every refusal, on an argument or on a result, looks like an absent file:
   `fileio_get_current_directory`, returns `File not found` when that path is
   outside the set.
 
-The server never answers "permission denied", and never names the allowlist. A
-caller cannot tell a refusal from an empty directory.
+The server never answers "permission denied", and never names the allowlist.
+
+It does not go further than that. A caller who compares messages closely can
+still tell a refusal from a genuine miss, because the two are built in
+different places and read differently. That is deliberate. The allowlist is not
+a secret: it names the working directories the operator chose, and the operator
+can tell the model what they are. Hiding its edge would buy nothing and cost
+the clarity of the error.
 
 An earlier design went further. A write to a blocked path reported success and
 did nothing, and several tools built synthetic results so that a block matched
@@ -133,12 +146,26 @@ Split the call instead.
 
 Resolution follows symbolic links, `.` and `..`. It cannot see a hard link,
 because a hard link has no target: it is a second name for the same file. A
-hard link inside a root, made earlier and pointing at a file outside every
-root, resolves to a path inside the root and reads clean. No path-based guard
-can tell the difference, and this one does not try.
+hard link inside a root, made earlier, is a path inside the root by every test
+this guard can apply.
 
-`SECURITY_AUDIT.md` records that neither end of a link this server creates may
-leave an allowed root. That covers links this server makes, not links it finds.
+This is not read-only, and it is not limited to paths merely outside the roots:
+
+- reading, appending with `fileio_write_file`, and changing the mode with
+  `fileio_set_permissions` all reach the file the second name points at;
+- a **blocked** path is reachable the same way. A hard link inside an allowed
+  root, pointing at a file under a `--block-path` entry, reads that file's
+  content and re-modes it. The block entries do not hold against a hard link.
+
+What limits it: this server refuses every route to creating such a link. The
+link target, the link path, and any copy or move that would produce one are all
+checked. So the link has to be made by something else, before or beside this
+server. No path-based guard can tell a hard link from an ordinary file, and
+this one does not try. Tracked as issue #27.
+
+`SECURITY_AUDIT.md` records that neither end of a link *this server creates*
+may leave an allowed root. That covers links this server makes, not links it
+finds.
 
 ## Where the operation acts is not always where the argument points
 

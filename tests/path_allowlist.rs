@@ -814,6 +814,48 @@ async fn read_symbolic_link_target_outside_the_allowlist_is_refused() {
     assert_reported_not_found(result, "a link whose immediate target is outside the root");
 }
 
+/// The relative half of the same rule, which the absolute case above cannot
+/// reach: the absolute branch never resolves the link path, so it cannot pick
+/// the wrong base directory.
+///
+/// The base for a relative target is the directory the link sits in. Reading
+/// it by resolving the link path itself gives the parent of the link's
+/// target, because resolution follows the final component, and the final
+/// component is the link.
+#[tokio::test]
+async fn relative_read_symbolic_link_target_outside_the_allowlist_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let deeper = root.path().join("sub").join("deep").join("deeper");
+    fs::create_dir_all(&deeper).expect("create the nested directories");
+    std::os::unix::fs::symlink("sub/deep/deeper", root.path().join("s"))
+        .expect("create the depth-adding symlink");
+
+    let registry = registry_rooted_at(root.path());
+
+    // Every `..` here is counted from <root>, where the link sits, so this
+    // names a path one level above the root.
+    let link = root.path().join("L");
+    registry
+        .execute_tool(
+            "fileio_create_symbolic_link",
+            &json!({"target": "s/../../ok.txt", "link_path": link.to_string_lossy()}),
+        )
+        .await
+        .expect("creating the link is not what this test is about");
+
+    let result = registry
+        .execute_tool(
+            "fileio_read_symbolic_link",
+            &json!({"path": link.to_string_lossy()}),
+        )
+        .await;
+
+    assert_reported_not_found(
+        result,
+        "a relative link target that names a path above the root",
+    );
+}
+
 /// `dirname` of an allowlist root is the root's parent, which is outside the
 /// set. A result is checked like any other path.
 #[tokio::test]
@@ -859,4 +901,172 @@ async fn symbolic_link_points_at_the_expanded_target_the_guard_checked() {
         target,
         "the link must point at the expanded target, not at the text typed"
     );
+}
+
+// ---------------------------------------------------------------------
+// Access through a symlinked parent component
+// ---------------------------------------------------------------------
+
+/// Build a root that reaches an outside directory through symlinked parent
+/// components, at one level and at two. Returns the allowed root and the
+/// outside directory.
+///
+/// `<root>/one` and `<root>/a/b/two` both point at the outside directory, so
+/// a path below either of them has a parent component that leaves the root
+/// while the leaf name says nothing about it.
+fn lab_with_symlinked_parents() -> (TempDir, TempDir) {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+
+    fs::write(outside.path().join("secret.txt"), "outside contents\n")
+        .expect("write the outside file");
+    fs::create_dir_all(outside.path().join("nested")).expect("create the outside subdirectory");
+    fs::write(
+        outside.path().join("nested").join("deep.txt"),
+        "deep contents\n",
+    )
+    .expect("write the deeper outside file");
+
+    std::os::unix::fs::symlink(outside.path(), root.path().join("one"))
+        .expect("create the one-level symlink");
+    let nested = root.path().join("a").join("b");
+    fs::create_dir_all(&nested).expect("create the nested directories");
+    std::os::unix::fs::symlink(outside.path(), nested.join("two"))
+        .expect("create the two-level symlink");
+
+    (root, outside)
+}
+
+/// The claim this whole change rests on: a parent component that is a symlink
+/// out of the root does not grant access to what it points at. Reads, writes
+/// and deletes alike, whether the symlink is the leaf's immediate parent or
+/// further up, and whether the symlink itself sits at the top of the root or
+/// two directories inside it.
+#[tokio::test]
+async fn read_write_and_delete_through_a_symlinked_parent_are_refused() {
+    let (root, outside) = lab_with_symlinked_parents();
+    let registry = registry_rooted_at(root.path());
+
+    let secret = outside.path().join("secret.txt");
+    let deep = outside.path().join("nested").join("deep.txt");
+
+    // The leaf's immediate parent is the symlink.
+    let one_level = at(&root.path().join("one"), "secret.txt");
+    // The symlink is the leaf's grandparent.
+    let through_nested = format!("{}/one/nested/deep.txt", root.path().display());
+    // The symlink itself sits two directories inside the root.
+    let two_levels = format!("{}/a/b/two/secret.txt", root.path().display());
+
+    for path in [&one_level, &through_nested, &two_levels] {
+        assert_reported_not_found(
+            registry
+                .execute_tool("fileio_read_lines", &json!({"path": path}))
+                .await,
+            &format!("a read through a symlinked parent ({path})"),
+        );
+    }
+
+    assert_reported_not_found(
+        registry
+            .execute_tool(
+                "fileio_write_file",
+                &json!({"path": &one_level, "content": "overwritten"}),
+            )
+            .await,
+        "a write through a symlinked parent",
+    );
+    assert_reported_not_found(
+        registry
+            .execute_tool(
+                "fileio_remove",
+                &json!({"path": [&one_level], "force": true}),
+            )
+            .await,
+        "a delete through a symlinked parent",
+    );
+
+    assert_eq!(
+        fs::read_to_string(&secret).expect("the outside file must survive"),
+        "outside contents\n",
+        "a refused write must not change the file it was aimed at"
+    );
+    assert!(deep.exists(), "the deeper outside file must survive");
+}
+
+/// Attribution: the guard is what refuses the calls above, and nothing else.
+/// Widen the allowlist to cover the outside directory and every one of them
+/// succeeds and really acts.
+#[tokio::test]
+async fn the_same_access_succeeds_once_the_allowlist_covers_the_target() {
+    let (root, outside) = lab_with_symlinked_parents();
+    let roots = [
+        root.path().to_string_lossy().into_owned(),
+        outside.path().to_string_lossy().into_owned(),
+    ];
+    let registry = ToolRegistry::with_guard(PathGuard::with_roots(&roots));
+
+    let one_level = at(&root.path().join("one"), "secret.txt");
+    let through_nested = format!("{}/one/nested/deep.txt", root.path().display());
+    let two_levels = format!("{}/a/b/two/secret.txt", root.path().display());
+
+    for path in [&one_level, &through_nested, &two_levels] {
+        let response = registry
+            .execute_tool("fileio_read_lines", &json!({"path": path}))
+            .await
+            .unwrap_or_else(|e| panic!("{path} must be readable once allowed: {e}"));
+        assert!(
+            body_text(&response).contains("contents"),
+            "the read must return the file's contents, got: {}",
+            body_text(&response)
+        );
+    }
+
+    registry
+        .execute_tool(
+            "fileio_write_file",
+            &json!({"path": &one_level, "content": "overwritten"}),
+        )
+        .await
+        .expect("the write must be accepted once allowed");
+    assert_eq!(
+        fs::read_to_string(outside.path().join("secret.txt")).expect("read the file back"),
+        "overwritten",
+        "the accepted write must really change the file"
+    );
+
+    registry
+        .execute_tool(
+            "fileio_remove",
+            &json!({"path": [&one_level], "force": true}),
+        )
+        .await
+        .expect("the delete must be accepted once allowed");
+    assert!(
+        !outside.path().join("secret.txt").exists(),
+        "the accepted delete must really remove the file"
+    );
+}
+
+/// A symlinked parent that stays inside the root is ordinary, and stays
+/// reachable. Without this the refusals above would also hold for a guard
+/// that refused every symlink.
+#[tokio::test]
+async fn access_through_a_symlinked_parent_inside_the_root_succeeds() {
+    let root = TempDir::new().expect("allowed root");
+    let real = root.path().join("real");
+    fs::create_dir_all(&real).expect("create the real directory");
+    fs::write(real.join("file.txt"), "inside contents\n").expect("write the inside file");
+    std::os::unix::fs::symlink(&real, root.path().join("inner"))
+        .expect("create the inside symlink");
+
+    let registry = registry_rooted_at(root.path());
+    let response = registry
+        .execute_tool(
+            "fileio_read_lines",
+            &json!({"path": at(&root.path().join("inner"), "file.txt")}),
+        )
+        .await
+        .expect("a symlinked parent inside the root must stay reachable");
+
+    assert!(body_text(&response).contains("inside contents"));
 }
