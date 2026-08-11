@@ -13,13 +13,18 @@ fileio-mcp intentionally provides arbitrary filesystem access within the process
 
 ## High Severity
 
-### 1. No Path Allowlist/Denylist (HIGH)
+### 1. No Path Allowlist/Denylist (HIGH) - RESOLVED
 
-**Files:** All operation files use `shellexpand::full()` without path bounds checking.
+**Files:** `src/path_guard.rs`, `src/tools.rs`.
 
-No directory allowlist or denylist is enforced. Callers can access any file the process user can reach.
+`PathGuard` now holds an allowlist of roots, and refuses everything else. It
+resolves a path before it compares, so a symlink out of a root and a `..`
+traversal are both decided on the real path, and it fails closed on anything it
+cannot identify. The check runs on tool arguments and on the paths a tool
+returns. See [docs/path_safety.md](docs/path_safety.md).
 
-**Recommendation:** Add optional configurable allowlist of base directories. Canonicalize paths and verify they remain within bounds.
+Open, and stated there: the guard does not close the race between the check and
+the open.
 
 ---
 
@@ -61,7 +66,10 @@ No explicit `chmod` after file/directory creation. If the process umask is permi
 
 Symlinks and hard links can point anywhere without validation.
 
-**Recommendation:** If an allowlist is implemented, validate that link targets remain within allowed directories.
+**Status:** Bounded by the allowlist. `fileio_create_hard_link` and
+`fileio_create_symbolic_link` check both the target and the link path, so
+neither end can leave an allowed root. The operations themselves still place no
+limit of their own.
 
 ---
 

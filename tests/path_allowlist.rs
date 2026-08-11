@@ -201,6 +201,67 @@ async fn copy_from_outside_the_allowlist_reports_not_found_and_copies_nothing() 
 }
 
 #[tokio::test]
+async fn copy_of_a_glob_matching_an_escaping_symlink_is_refused() {
+    let root = TempDir::new().expect("allowed root");
+    let outside = TempDir::new().expect("outside root");
+    let secret = outside.path().join("outside-secret.txt");
+    fs::write(&secret, "real contents").expect("write the outside file");
+
+    // The glob itself never leaves the root. One of the entries it matches
+    // does, so the pattern alone is not enough to decide the call.
+    fs::write(root.path().join("plain.txt"), "ordinary").expect("write the inside file");
+    std::os::unix::fs::symlink(&secret, root.path().join("escape-link.txt"))
+        .expect("create the escaping symlink");
+    let destination = root.path().join("dest");
+    fs::create_dir_all(&destination).expect("create the destination directory");
+
+    let registry = registry_rooted_at(root.path());
+    let result = registry
+        .execute_tool(
+            "fileio_copy",
+            &json!({
+                "source": [format!("{}/*.txt", root.path().display())],
+                "destination": destination.to_string_lossy(),
+            }),
+        )
+        .await;
+
+    assert_reported_not_found(result, "a copy whose glob matches an escaping symlink");
+    let copied: Vec<_> = fs::read_dir(&destination)
+        .expect("read the destination")
+        .map(|entry| entry.expect("a destination entry").path())
+        .collect();
+    assert!(
+        copied.is_empty(),
+        "a refused copy must copy nothing, found: {copied:?}"
+    );
+}
+
+#[tokio::test]
+async fn copy_of_a_glob_matching_only_permitted_entries_succeeds() {
+    let root = TempDir::new().expect("allowed root");
+    fs::write(root.path().join("one.txt"), "first").expect("write the first file");
+    fs::write(root.path().join("two.txt"), "second").expect("write the second file");
+    let destination = root.path().join("dest");
+    fs::create_dir_all(&destination).expect("create the destination directory");
+
+    let registry = registry_rooted_at(root.path());
+    registry
+        .execute_tool(
+            "fileio_copy",
+            &json!({
+                "source": [format!("{}/*.txt", root.path().display())],
+                "destination": destination.to_string_lossy(),
+            }),
+        )
+        .await
+        .expect("a glob wholly inside the root must be copied");
+
+    assert!(destination.join("one.txt").exists());
+    assert!(destination.join("two.txt").exists());
+}
+
+#[tokio::test]
 async fn stat_refuses_the_call_when_one_path_is_outside_the_allowlist() {
     let root = TempDir::new().expect("allowed root");
     let outside = TempDir::new().expect("outside root");

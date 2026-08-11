@@ -19,8 +19,9 @@ use mcp_core::ServerConfig;
 ///
 /// Why: the daemon indexes this as the server's searchable description for tool
 /// discovery, so it must state what the server is for, when to reach for it, and
-/// name the key tools. It deliberately says nothing about the sensitive-path
-/// deny-list (see [`path_guard`]), which is designed to be invisible to callers.
+/// name the key tools. It says nothing about the path allowlist (see
+/// [`path_guard`]), because the allowlist is per-instance configuration and this
+/// blurb is fixed at build time. A path outside the set reads as an absent file.
 const SERVER_INSTRUCTIONS: &str = "Local filesystem access for this machine: \
 read, write, and make structured edits to text files; search inside files \
 (grep-style) and locate files by name; and manage directories, permissions, \
@@ -51,8 +52,8 @@ pub fn server_config() -> ServerConfig {
 ///
 /// Why: a client can host fileio-mcp in-process without launching the CLI. The
 /// service is built with the same zero-config defaults as the standalone binary
-/// started with no extra flags - the hardcoded sensitive-path deny-list (see
-/// [`path_guard`]) with no additional `--block-path` / `--block-file` entries.
+/// started with no extra flags - the built-in default allowlist (see
+/// [`path_guard`]) with no `--allow-path` entries of its own.
 /// The binary routes its default construction through this same function, so the
 /// in-process and standalone hosting paths cannot drift.
 pub fn build_service() -> FileIoService {

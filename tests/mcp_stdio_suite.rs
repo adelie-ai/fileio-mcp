@@ -1655,9 +1655,16 @@ fn fileio_get_basename() {
 
 #[test]
 fn fileio_get_basename_trailing_slash() {
-    run_case("fileio_get_basename_trailing_slash", |client, _root| {
+    run_case("fileio_get_basename_trailing_slash", |client, root| {
+        let case = case_dir(root, "fileio_get_basename_trailing_slash");
+        let dir = case.join("bin");
+        fs::create_dir_all(&dir).expect("create the directory");
+
         let res = client
-            .tool_call("fileio_get_basename", json!({"path": "/usr/bin/"}))
+            .tool_call(
+                "fileio_get_basename",
+                json!({"path": format!("{}/", dir.display())}),
+            )
             .unwrap();
         assert_eq!(extract_value(&res), Value::String("bin".to_string()));
     });

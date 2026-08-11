@@ -117,6 +117,15 @@ whole call is refused and the message names that path. Running the operation on
 the rest gives a partial answer that the caller cannot tell from a complete one.
 Split the call instead.
 
+## A glob is checked by what it matches
+
+`fileio_copy`, `fileio_move` and `fileio_remove` accept a glob in place of a
+path. The pattern as written always stays inside the root that contains it, so
+it says nothing about the entries it matches: a symlink among them can point out
+of the root, and a copy follows it. The guard expands the glob and checks each
+match as well as the pattern. A glob it cannot expand is refused, because it
+cannot say where the glob points.
+
 ## `--block-path` and `--block-file`
 
 Both flags are deprecated. They are still accepted, and they still subtract:

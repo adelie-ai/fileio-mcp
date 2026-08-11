@@ -3,8 +3,9 @@
 // Path utility functions (basename, dirname, realpath, readlink)
 
 use crate::error::{FileIoError, Result};
+use globset::{Glob, GlobMatcher};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Get the basename (filename) from a path
 #[tracing::instrument(skip_all)]
@@ -131,6 +132,74 @@ pub fn readlink(path: &str) -> Result<String> {
         ))
         .into()
     })
+}
+
+/// Whether `s` carries glob metacharacters.
+///
+/// Shared by `cp`, `mv` and `rm`, which all accept a glob in place of a
+/// path, and by the tool layer, which has to check what a glob expands to
+/// and not only the pattern as written.
+pub fn is_glob_pattern(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{')
+}
+
+/// Expand a glob to the matching entries of its parent directory.
+///
+/// The match is on the file name alone, so an expansion never descends and
+/// never leaves the pattern's parent directory.
+pub fn expand_glob(pattern: &str) -> Result<Vec<PathBuf>> {
+    let expanded_pattern = shellexpand::full(pattern)
+        .map_err(|e| {
+            crate::error::FileIoMcpError::from(crate::error::FileIoError::InvalidPath(format!(
+                "Failed to expand path \'{}\': {}",
+                pattern, e
+            )))
+        })
+        .map(|expanded| expanded.into_owned())?;
+    let path = Path::new(&expanded_pattern);
+    let (base_dir, glob_str) = if let Some(parent) = path.parent() {
+        if parent.as_os_str().is_empty() {
+            (
+                Path::new("."),
+                path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern),
+            )
+        } else {
+            (
+                parent,
+                path.file_name().and_then(|n| n.to_str()).unwrap_or(pattern),
+            )
+        }
+    } else {
+        (Path::new("."), pattern)
+    };
+
+    let glob = Glob::new(glob_str).map_err(|e| {
+        FileIoError::InvalidPath(format!("Invalid glob pattern {}: {}", pattern, e))
+    })?;
+    let matcher: GlobMatcher = glob.compile_matcher();
+
+    let mut matches = Vec::new();
+    let entries = fs::read_dir(base_dir).map_err(|e| {
+        FileIoError::ReadError(format!(
+            "Failed to read directory {}: {}",
+            base_dir.display(),
+            e
+        ))
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            FileIoError::ReadError(format!("Failed to read directory entry: {}", e))
+        })?;
+        let entry_path = entry.path();
+        if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+            && matcher.is_match(file_name)
+        {
+            matches.push(entry_path);
+        }
+    }
+
+    Ok(matches)
 }
 
 #[cfg(test)]
